@@ -717,7 +717,11 @@ proper position among the other output files.  */
 #ifndef LINK_COMMAND_SPEC
 #define LINK_COMMAND_SPEC "\
 %{!fsyntax-only:%{!c:%{!M:%{!MM:%{!E:%{!S:\
-    %(linker) %{use-gold-plugin: -plugin %(gold_plugin_file)} \
+    %(linker) \
+    %{use-gold-plugin: \
+     -plugin %(gold_plugin_file) \
+     -plugin-opt=as=%(gold_plugin_as) \
+    } \
     %l " LINK_PIE_SPEC "%X %{o*} %{A} %{d} %<emit-llvm %{e*}\
     %{m} %{N} %{n} %{r}\
     %{s} %{t} %<use-gold-plugin \
@@ -773,6 +777,7 @@ static const char *linker_name_spec = LINKER_NAME;
 /* LLVM LOCAL begin */
 #ifdef ENABLE_LLVM
 static const char *gold_plugin_file_spec = "";
+static const char *gold_plugin_as_spec = "";
 #endif
 /* LLVM LOCAL end */
 static const char *link_command_spec = LINK_COMMAND_SPEC;
@@ -1185,6 +1190,8 @@ static const struct option_map option_map[] =
    /* LLVM LOCAL end */
    {"--machine", "-m", "aj"},
    {"--machine-", "-m", "*j"},
+   /* LLVM LOCAL no-canonical-prefixes */
+   {"--no-canonical-prefixes", "-no-canonical-prefixes", 0},
    {"--no-integrated-cpp", "-no-integrated-cpp", 0},
    {"--no-line-commands", "-P", 0},
    {"--no-precompiled-includes", "-noprecomp", 0},
@@ -1656,6 +1663,7 @@ static struct spec_list static_specs[] =
   /* LLVM LOCAL begin */
 #ifdef ENABLE_LLVM
   INIT_STATIC_SPEC ("gold_plugin_file",		&gold_plugin_file_spec),
+  INIT_STATIC_SPEC ("gold_plugin_as",		&gold_plugin_as_spec),
   INIT_STATIC_SPEC ("llvm_options",		&llvm_options),
 #endif
   /* LLVM LOCAL end */
@@ -3335,6 +3343,11 @@ display_help (void)
   fputs (_("  -Xlinker <arg>           Pass <arg> on to the linker\n"), stdout);
   fputs (_("  -combine                 Pass multiple source files to compiler at once\n"), stdout);
   fputs (_("  -save-temps              Do not delete intermediate files\n"), stdout);
+  /* LLVM LOCAL begin no-canonical-prefixes */
+  fputs (_("\
+  -no-canonical-prefixes   Do not canonicalize paths when building relative\n\
+                           prefixes to other gcc components\n"), stdout);
+  /* LLVM LOCAL end no-canonical-prefixes */
   fputs (_("  -pipe                    Use pipes rather than intermediate files\n"), stdout);
   fputs (_("  -time                    Time the execution of each subprocess\n"), stdout);
   fputs (_("  -specs=<file>            Override built-in specs with the contents of <file>\n"), stdout);
@@ -3427,6 +3440,10 @@ process_command (int argc, const char **argv)
   int is_modify_target_name;
   unsigned int j;
 #endif
+  /* LLVM LOCAL begin no-canonical-prefixes */
+  char *(*get_relative_prefix) (const char *, const char *,
+				const char *) = NULL;
+  /* LLVM LOCAL end no-canonical-prefixes */
 
   GET_ENVIRONMENT (gcc_exec_prefix, "GCC_EXEC_PREFIX");
 
@@ -3513,6 +3530,30 @@ process_command (int argc, const char **argv)
       fatal ("couldn't run '%s': %s", new_argv0, xstrerror (errno));
     }
 
+  /* LLVM LOCAL begin no-canonical-prefixes */
+  /* Convert new-style -- options to old-style.  */
+  translate_options (&argc, (const char * const **) &argv);
+
+  /* Do language-specific adjustment/addition of flags.  */
+  lang_specific_driver (&argc, (const char * const **) &argv,
+			&added_libraries);
+
+  /* Handle any -no-canonical-prefixes flag early, to assign the function
+     that builds relative prefixes.  This function creates default search
+     paths that are needed later in normal option handling.  */
+
+  for (i = 1; i < argc; i++)
+    {
+      if (! strcmp (argv[i], "-no-canonical-prefixes"))
+	{
+	  get_relative_prefix = make_relative_prefix_ignore_links;
+	  break;
+	}
+    }
+  if (! get_relative_prefix)
+    get_relative_prefix = make_relative_prefix;
+  /* LLVM LOCAL end no-canonical-prefixes */
+
   /* Set up the default search paths.  If there is no GCC_EXEC_PREFIX,
      see if we can create it from the pathname specified in argv[0].  */
 
@@ -3521,11 +3562,14 @@ process_command (int argc, const char **argv)
   /* FIXME: make_relative_prefix doesn't yet work for VMS.  */
   if (!gcc_exec_prefix)
     {
-      gcc_exec_prefix = make_relative_prefix (argv[0], standard_bindir_prefix,
-					      standard_exec_prefix);
-      gcc_libexec_prefix = make_relative_prefix (argv[0],
-						 standard_bindir_prefix,
-						 standard_libexec_prefix);
+      /* LLVM LOCAL begin no-canonical-prefixes */
+      gcc_exec_prefix = get_relative_prefix (argv[0],
+					     standard_bindir_prefix,
+					     standard_exec_prefix);
+      gcc_libexec_prefix = get_relative_prefix (argv[0],
+					     standard_bindir_prefix,
+					     standard_libexec_prefix);
+      /* LLVM LOCAL end no-canonical-prefixes */
       if (gcc_exec_prefix)
 	putenv (concat ("GCC_EXEC_PREFIX=", gcc_exec_prefix, NULL));
     }
@@ -3536,9 +3580,11 @@ process_command (int argc, const char **argv)
 	 / (which is ignored by make_relative_prefix), so append a
 	 program name.  */
       char *tmp_prefix = concat (gcc_exec_prefix, "gcc", NULL);
-      gcc_libexec_prefix = make_relative_prefix (tmp_prefix,
-						 standard_exec_prefix,
-						 standard_libexec_prefix);
+      /* LLVM LOCAL begin no-canonical-prefixes */
+      gcc_libexec_prefix = get_relative_prefix (tmp_prefix,
+						standard_exec_prefix,
+						standard_libexec_prefix);
+      /* LLVM LOCAL end no-canonical-prefixes */
       free (tmp_prefix);
     }
 #else
@@ -3668,11 +3714,8 @@ process_command (int argc, const char **argv)
 	}
     }
 
-  /* Convert new-style -- options to old-style.  */
-  translate_options (&argc, (const char *const **) &argv);
-
-  /* Do language-specific adjustment/addition of flags.  */
-  lang_specific_driver (&argc, (const char *const **) &argv, &added_libraries);
+  /* LLVM LOCAL begin no-canonical-prefixes */
+  /* LLVM LOCAL end no-canonical-prefixes */
 
   /* Scan argv twice.  Here, the first time, just count how many switches
      there will be in their vector, and how many input files in theirs.
@@ -3885,6 +3928,11 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n"
 	  n_infiles += 2;
 	  i++;
 	}
+      /* LLVM LOCAL begin no-canonical-prefixes */
+      else if (strcmp (argv[i], "-no-canonical-prefixes") == 0)
+	/* Already handled as a special case, so ignored here.  */
+	;
+      /* LLVM LOCAL end no-canonical-prefixes */
       /* APPLE LOCAL end -weak_* (radar 3235250) */
       else if (strcmp (argv[i], "-combine") == 0)
 	{
@@ -4218,9 +4266,11 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n"
      ``make_relative_prefix'' is not compiled for VMS, so don't call it.  */
   if (target_system_root && gcc_exec_prefix)
     {
-      char *tmp_prefix = make_relative_prefix (argv[0],
-					       standard_bindir_prefix,
-					       target_system_root);
+      /* LLVM LOCAL begin no-canonical-prefixes */
+      char *tmp_prefix = get_relative_prefix (argv[0],
+					      standard_bindir_prefix,
+					      target_system_root);
+      /* LLVM LOCAL end no-canonical-prefixes */
       if (tmp_prefix && access_check (tmp_prefix, F_OK) == 0)
 	{
 	  target_system_root = tmp_prefix;
@@ -4262,6 +4312,10 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n"
 	;
       else if (! strncmp (argv[i], "-Wp,", 4))
 	;
+      /* LLVM LOCAL begin no-canonical-prefixes */
+      else if (! strcmp (argv[i], "-no-canonical-prefixes"))
+	;
+      /* LLVM LOCAL end no-canonical-prefixes */
       else if (! strcmp (argv[i], "-pass-exit-codes"))
 	;
       else if (! strcmp (argv[i], "-print-search-dirs"))
@@ -7183,6 +7237,9 @@ main (int argc, char **argv)
 	  if (!gold_plugin_file_spec)
 	    fatal ("-use-gold-plugin, but libLLVMgold.so not found.");
 	}
+      gold_plugin_as_spec = find_a_file (&exec_prefixes, "as", X_OK, false);
+      if (!gold_plugin_as_spec)
+	gold_plugin_as_spec = "as";
 #endif
       /* LLVM LOCAL end */
       /* Rebuild the COMPILER_PATH and LIBRARY_PATH environment variables

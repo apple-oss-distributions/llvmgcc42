@@ -20,8 +20,9 @@ along with GCC; see the file COPYING.  If not, write to the Free
 Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 02111-1307, USA.  */
 
+#include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
-#include "llvm/ModuleProvider.h"
+#include "llvm/Type.h"
 #include "llvm/Analysis/Verifier.h"
 #include "llvm/Analysis/DebugInfo.h"
 #include "llvm/Assembly/PrintModulePass.h"
@@ -32,9 +33,10 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/PrettyStackTrace.h"
-#include "llvm/Support/Streams.h"
-#include "llvm/Target/TargetMachineRegistry.h"
+#include "llvm/Support/IRBuilder.h"
+#include "llvm/Support/raw_os_ostream.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetRegistry.h"
 
 /// dummy_function - This is used when linking the LLVM libraries into a dynamic
 /// library, allowing the llvm backend to be shared across the various
@@ -44,11 +46,12 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 /// This function is never dynamically called.
 ///
 void dummy_function() {
-  llvm::ModuleProvider *MP = new llvm::ExistingModuleProvider(0);
+  llvm::LLVMContext Ctxt;
+  llvm::raw_os_ostream XXStr(*(std::ostream*)0);
   llvm::createVerifierPass();
-  llvm::CreateBitcodeWriterPass(*llvm::cout);
-  llvm::WriteBitcodeToFile(0, *llvm::cout);
-  llvm::ParseBitcodeFile(NULL);
+  llvm::createBitcodeWriterPass(llvm::outs());
+  llvm::WriteBitcodeToFile(0, llvm::outs());
+  llvm::ParseBitcodeFile(NULL, Ctxt);
   llvm::MemoryBuffer::getNewMemBuffer(0);
 
   llvm::createInstructionCombiningPass();
@@ -72,13 +75,10 @@ void dummy_function() {
   llvm::createAggressiveDCEPass();
   llvm::createConstantMergePass();
   llvm::createIndVarSimplifyPass();
-  llvm::createPredicateSimplifierPass();
-  llvm::createCondPropagationPass();
   llvm::createGlobalOptimizerPass();
   llvm::createJumpThreadingPass();
   llvm::createFunctionInliningPass();
   llvm::createAlwaysInlinerPass();
-  llvm::createRaiseAllocationsPass();
   llvm::createSimplifyLibCallsPass();
   llvm::createArgumentPromotionPass();
   llvm::createDeadArgEliminationPass();
@@ -91,12 +91,16 @@ void dummy_function() {
   llvm::createLoopDeletionPass();
   llvm::createFunctionAttrsPass();
   llvm::createPrintModulePass(0);
+  
+  llvm::Type::getInt8Ty(llvm::getGlobalContext());
 
   llvm::PrettyStackTraceProgram::PrettyStackTraceProgram(0, 0);
-  llvm::DIFactory::DIFactory(*MP->getModule());
+  llvm::DIFactory::DIFactory(*static_cast<llvm::Module *>(0));
   std::string Err;
-  llvm::TargetMachineRegistry::getClosestStaticTargetForModule(*MP->getModule(),
-                                                               Err);
+  llvm::TargetRegistry::lookupTarget("", Err);
+
+  llvm::IRBuilder<> * volatile X;
+  X->getCurrentFunctionReturnType();
 }
 
 /* LLVM LOCAL end (ENTIRE FILE!)  */

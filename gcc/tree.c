@@ -3347,6 +3347,10 @@ annotate_with_file_line (tree node, const char *file, int line)
      entry cache can reduce the number of allocations by more
      than half.  */
   if (last_annotated_node
+      /* LLVM LOCAL begin - Check for NULL file (both places).  */
+      && file
+      && last_annotated_node->file
+      /* LLVM LOCAL end - Check for NULL file (both places).  */
       && last_annotated_node->line == line
       && (last_annotated_node->file == file
 	  || !strcmp (last_annotated_node->file, file)))
@@ -7948,7 +7952,7 @@ note_alternative_entry_points (void)
 /* APPLE LOCAL end CW asm blocks */
 
 /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
+/* Do not conditionalize this on ENABLE_LLVM.  The GTY gets used regardless. */
 /* This data structure keeps gcc's garbage collector from
    deleting types created by the llvm virtual base class handling
    stuff in llvm-types.cpp. */
@@ -7959,7 +7963,28 @@ llvm_note_type_used(tree type)
 {
   VEC_safe_push(tree, gc, llvm_types_used, type);
 }
-#endif
+
+static GTY(()) VEC(tree,gc) *llvm_TypeUsers;
+
+/* We're about to write a PCH; record the set of GCC types known to
+   the llvm-types.ccp:TypeRefinementDatabase::TypeUsers[] mapping.  */
+void
+llvm_push_TypeUsers(tree type)
+{
+  VEC_safe_push(tree, gc, llvm_TypeUsers, type);
+}
+
+/* We just read in a PCH.  Retrieve the set of types recorded here,
+   used to repopulate the
+   llvm-types.ccp:TypeRefinementDatabase::TypeUsers[] mapping.  */
+tree
+llvm_pop_TypeUsers(void)
+{
+  if (VEC_empty (tree, llvm_TypeUsers))
+    return NULL_TREE;
+  else
+    return VEC_pop(tree, llvm_TypeUsers);
+}
 /* LLVM LOCAL end */
 
 /* APPLE LOCAL begin weak_import on property 6676828 */
@@ -7975,5 +8000,36 @@ bool in_objc_property_decl_context (void) {
   return objc_property_decl_context;
 }
 /* APPLE LOCAL end weak_import on property 6676828 */
+
+/* LLVM LOCAL begin radar 6419781 */
+bool
+type_is_block_byref_struct (tree type)
+{
+  if (!type)
+    return false;
+
+  if (TREE_CODE (type) == POINTER_TYPE)
+    type = TREE_TYPE (type);
+
+  if (!type 
+      || ! TYPE_NAME (type)
+      || ! (TREE_CODE (type) == RECORD_TYPE))
+    return false;
+
+  if (TREE_CODE (TYPE_NAME (type)) == IDENTIFIER_NODE
+      && strncmp (IDENTIFIER_POINTER (TYPE_NAME (type)),
+                  "__Block_byref_", 14) == 0)
+    return true;
+  else if (TREE_CODE (TYPE_NAME (type)) == TYPE_DECL
+           && DECL_NAME (TYPE_NAME (type))
+           && IDENTIFIER_POINTER (DECL_NAME (TYPE_NAME (type)))
+           && (strncmp 
+               (IDENTIFIER_POINTER (DECL_NAME (TYPE_NAME (type))),
+                "__Block_byref_", 14) == 0))
+    return true;
+  else
+    return false;
+}
+/* LLVM LOCAL begin end 6419781 */
 
 #include "gt-tree.h"

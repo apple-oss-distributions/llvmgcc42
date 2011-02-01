@@ -30,12 +30,15 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 #include "llvm/DerivedTypes.h"
 #include "llvm/Instructions.h"
 #include "llvm/Intrinsics.h"
+#include "llvm/LLVMContext.h"
 #include "llvm/Module.h"
 #include "llvm-i386-target.h"
 
 extern "C" {
 #include "toplev.h"
 }
+
+static LLVMContext &Context = getGlobalContext();
 
 /* TargetIntrinsicLower - For builtins that we want to expand to normal LLVM
  * code, emit the code now.  If we can handle the code, this macro should emit
@@ -51,6 +54,8 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   default: break;
   case IX86_BUILTIN_ADDPS:
   case IX86_BUILTIN_ADDPD:
+    Result = Builder.CreateFAdd(Ops[0], Ops[1]);
+    return true;
   case IX86_BUILTIN_PADDB:
   case IX86_BUILTIN_PADDW:
   case IX86_BUILTIN_PADDD:
@@ -59,10 +64,12 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_PADDW128:
   case IX86_BUILTIN_PADDD128:
   case IX86_BUILTIN_PADDQ128:
-    Result = Builder.CreateAdd(Ops[0], Ops[1], "tmp");
+    Result = Builder.CreateAdd(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_SUBPS:
   case IX86_BUILTIN_SUBPD:
+    Result = Builder.CreateFSub(Ops[0], Ops[1]);
+    return true;
   case IX86_BUILTIN_PSUBB:
   case IX86_BUILTIN_PSUBW:
   case IX86_BUILTIN_PSUBD:
@@ -71,34 +78,37 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_PSUBW128:
   case IX86_BUILTIN_PSUBD128:
   case IX86_BUILTIN_PSUBQ128:
-    Result = Builder.CreateSub(Ops[0], Ops[1], "tmp");
+    Result = Builder.CreateSub(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_MULPS:
   case IX86_BUILTIN_MULPD:
+    Result = Builder.CreateFMul(Ops[0], Ops[1]);
+    return true;
   case IX86_BUILTIN_PMULLW:
   case IX86_BUILTIN_PMULLW128:
-    Result = Builder.CreateMul(Ops[0], Ops[1], "tmp");
+  case IX86_BUILTIN_PMULLD128:
+    Result = Builder.CreateMul(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_DIVPS:
   case IX86_BUILTIN_DIVPD:
-    Result = Builder.CreateFDiv(Ops[0], Ops[1], "tmp");
+    Result = Builder.CreateFDiv(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_PAND:
   case IX86_BUILTIN_PAND128:
-    Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
+    Result = Builder.CreateAnd(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_PANDN:
   case IX86_BUILTIN_PANDN128:
-    Ops[0] = Builder.CreateNot(Ops[0], "tmp");
-    Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
+    Ops[0] = Builder.CreateNot(Ops[0]);
+    Result = Builder.CreateAnd(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_POR:
   case IX86_BUILTIN_POR128:
-    Result = Builder.CreateOr(Ops[0], Ops[1], "tmp");
+    Result = Builder.CreateOr(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_PXOR:
   case IX86_BUILTIN_PXOR128:
-    Result = Builder.CreateXor(Ops[0], Ops[1], "tmp");
+    Result = Builder.CreateXor(Ops[0], Ops[1]);
     return true;
   case IX86_BUILTIN_ANDPS:
   case IX86_BUILTIN_ORPS:
@@ -109,33 +119,35 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_XORPD:
   case IX86_BUILTIN_ANDNPD:
     if (cast<VectorType>(ResultType)->getNumElements() == 4)  // v4f32
-      Ops[0] = Builder.CreateBitCast(Ops[0], VectorType::get(Type::Int32Ty, 4),
+      Ops[0] = Builder.CreateBitCast(Ops[0], 
+                                  VectorType::get(Type::getInt32Ty(Context), 4),
                                      "tmp");
     else                                                      // v2f64
-      Ops[0] = Builder.CreateBitCast(Ops[0], VectorType::get(Type::Int64Ty, 2),
+      Ops[0] = Builder.CreateBitCast(Ops[0], 
+                                 VectorType::get(Type::getInt64Ty(Context), 2),
                                      "tmp");
     
-    Ops[1] = Builder.CreateBitCast(Ops[1], Ops[0]->getType(), "tmp");
+    Ops[1] = Builder.CreateBitCast(Ops[1], Ops[0]->getType());
     switch (FnCode) {
       case IX86_BUILTIN_ANDPS:
       case IX86_BUILTIN_ANDPD:
-        Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
+        Result = Builder.CreateAnd(Ops[0], Ops[1]);
         break;
       case IX86_BUILTIN_ORPS:
       case IX86_BUILTIN_ORPD:
-        Result = Builder.CreateOr (Ops[0], Ops[1], "tmp");
+        Result = Builder.CreateOr (Ops[0], Ops[1]);
          break;
       case IX86_BUILTIN_XORPS:
       case IX86_BUILTIN_XORPD:
-        Result = Builder.CreateXor(Ops[0], Ops[1], "tmp");
+        Result = Builder.CreateXor(Ops[0], Ops[1]);
         break;
       case IX86_BUILTIN_ANDNPS:
       case IX86_BUILTIN_ANDNPD:
-        Ops[0] = Builder.CreateNot(Ops[0], "tmp");
-        Result = Builder.CreateAnd(Ops[0], Ops[1], "tmp");
+        Ops[0] = Builder.CreateNot(Ops[0]);
+        Result = Builder.CreateAnd(Ops[0], Ops[1]);
         break;
     }
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   case IX86_BUILTIN_SHUFPS:
     if (ConstantInt *Elt = dyn_cast<ConstantInt>(Ops[2])) {
@@ -268,129 +280,129 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     Result = BuildVectorShuffle(Ops[0], Ops[1], 2, 1);
     return true;
   case IX86_BUILTIN_MOVQ: {
-    Value *Zero = ConstantInt::get(Type::Int32Ty, 0);
+    Value *Zero = ConstantInt::get(Type::getInt32Ty(Context), 0);
     Result = BuildVector(Zero, Zero, Zero, Zero, NULL);
     Result = BuildVectorShuffle(Result, Ops[0], 4, 5, 2, 3);
     return true;
   }
   case IX86_BUILTIN_LOADQ: {
-    PointerType *i64Ptr = PointerType::getUnqual(Type::Int64Ty);
-    Ops[0] = Builder.CreateBitCast(Ops[0], i64Ptr, "tmp");
-    Ops[0] = Builder.CreateLoad(Ops[0], "tmp");
-    Value *Zero = ConstantInt::get(Type::Int64Ty, 0);
+    const PointerType *i64Ptr = Type::getInt64PtrTy(Context);
+    Ops[0] = Builder.CreateBitCast(Ops[0], i64Ptr);
+    Ops[0] = Builder.CreateLoad(Ops[0]);
+    Value *Zero = ConstantInt::get(Type::getInt64Ty(Context), 0);
     Result = BuildVector(Zero, Zero, NULL);
-    Value *Idx = ConstantInt::get(Type::Int32Ty, 0);
-    Result = Builder.CreateInsertElement(Result, Ops[0], Idx, "tmp");
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Value *Idx = ConstantInt::get(Type::getInt32Ty(Context), 0);
+    Result = Builder.CreateInsertElement(Result, Ops[0], Idx);
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_LOADUPS: {
-    VectorType *v4f32 = VectorType::get(Type::FloatTy, 4);
-    PointerType *v4f32Ptr = PointerType::getUnqual(v4f32);
-    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr, "tmp");
-    LoadInst *LI = Builder.CreateLoad(BC, "tmp");
+    VectorType *v4f32 = VectorType::get(Type::getFloatTy(Context), 4);
+    const PointerType *v4f32Ptr = v4f32->getPointerTo();
+    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr);
+    LoadInst *LI = Builder.CreateLoad(BC);
     LI->setAlignment(1);
     Result = LI;
     return true;
   }
   case IX86_BUILTIN_LOADUPD: {
-    VectorType *v2f64 = VectorType::get(Type::DoubleTy, 2);
-    PointerType *v2f64Ptr = PointerType::getUnqual(v2f64);
-    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr, "tmp");
-    LoadInst *LI = Builder.CreateLoad(BC, "tmp");
+    VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
+    const PointerType *v2f64Ptr = v2f64->getPointerTo();
+    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr);
+    LoadInst *LI = Builder.CreateLoad(BC);
     LI->setAlignment(1);
     Result = LI;
     return true;
   }
   case IX86_BUILTIN_LOADDQU: {
-    VectorType *v16i8 = VectorType::get(Type::Int8Ty, 16);
-    PointerType *v16i8Ptr = PointerType::getUnqual(v16i8);
-    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr, "tmp");
-    LoadInst *LI = Builder.CreateLoad(BC, "tmp");
+    VectorType *v16i8 = VectorType::get(Type::getInt8Ty(Context), 16);
+    const PointerType *v16i8Ptr = v16i8->getPointerTo();
+    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr);
+    LoadInst *LI = Builder.CreateLoad(BC);
     LI->setAlignment(1);
     Result = LI;
     return true;
   }
   case IX86_BUILTIN_STOREUPS: {
-    VectorType *v4f32 = VectorType::get(Type::FloatTy, 4);
-    PointerType *v4f32Ptr = PointerType::getUnqual(v4f32);
-    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr, "tmp");
+    VectorType *v4f32 = VectorType::get(Type::getFloatTy(Context), 4);
+    const PointerType *v4f32Ptr = v4f32->getPointerTo();
+    Value *BC = Builder.CreateBitCast(Ops[0], v4f32Ptr);
     StoreInst *SI = Builder.CreateStore(Ops[1], BC);
     SI->setAlignment(1);
     Result = SI;
     return true;
   }
   case IX86_BUILTIN_STOREUPD: {
-    VectorType *v2f64 = VectorType::get(Type::DoubleTy, 2);
-    PointerType *v2f64Ptr = PointerType::getUnqual(v2f64);
-    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr, "tmp");
+    VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
+    const PointerType *v2f64Ptr = v2f64->getPointerTo();
+    Value *BC = Builder.CreateBitCast(Ops[0], v2f64Ptr);
     StoreInst *SI = Builder.CreateStore(Ops[1], BC);
     SI->setAlignment(1);
     Result = SI;
     return true;
   }
   case IX86_BUILTIN_STOREDQU: {
-    VectorType *v16i8 = VectorType::get(Type::Int8Ty, 16);
-    PointerType *v16i8Ptr = PointerType::getUnqual(v16i8);
-    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr, "tmp");
+    VectorType *v16i8 = VectorType::get(Type::getInt8Ty(Context), 16);
+    const PointerType *v16i8Ptr = v16i8->getPointerTo();
+    Value *BC = Builder.CreateBitCast(Ops[0], v16i8Ptr);
     StoreInst *SI = Builder.CreateStore(Ops[1], BC);
     SI->setAlignment(1);
     Result = SI;
     return true;
   }
   case IX86_BUILTIN_LOADHPS: {
-    PointerType *f64Ptr = PointerType::getUnqual(Type::DoubleTy);
-    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr, "tmp");
-    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
-    Ops[1] = BuildVector(Load, UndefValue::get(Type::DoubleTy), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
+    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
+    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr);
+    Value *Load = Builder.CreateLoad(Ops[1]);
+    Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
     Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 1, 4, 5);
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_LOADLPS: {
-    PointerType *f64Ptr = PointerType::getUnqual(Type::DoubleTy);
-    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr, "tmp");
-    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
-    Ops[1] = BuildVector(Load, UndefValue::get(Type::DoubleTy), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
+    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
+    Ops[1] = Builder.CreateBitCast(Ops[1], f64Ptr);
+    Value *Load = Builder.CreateLoad(Ops[1]);
+    Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
     Result = BuildVectorShuffle(Ops[0], Ops[1], 4, 5, 2, 3);
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_LOADHPD: {
-    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
-    Ops[1] = BuildVector(Load, UndefValue::get(Type::DoubleTy), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
+    Value *Load = Builder.CreateLoad(Ops[1]);
+    Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
     Result = BuildVectorShuffle(Ops[0], Ops[1], 0, 2);
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_LOADLPD: {
-    Value *Load = Builder.CreateLoad(Ops[1], "tmp");
-    Ops[1] = BuildVector(Load, UndefValue::get(Type::DoubleTy), NULL);
-    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType, "tmp");
+    Value *Load = Builder.CreateLoad(Ops[1]);
+    Ops[1] = BuildVector(Load, UndefValue::get(Type::getDoubleTy(Context)), NULL);
+    Ops[1] = Builder.CreateBitCast(Ops[1], ResultType);
     Result = BuildVectorShuffle(Ops[0], Ops[1], 2, 1);
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_STOREHPS: {
-    VectorType *v2f64 = VectorType::get(Type::DoubleTy, 2);
-    PointerType *f64Ptr = PointerType::getUnqual(Type::DoubleTy);
-    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr, "tmp");
-    Value *Idx = ConstantInt::get(Type::Int32Ty, 1);
-    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64, "tmp");
-    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx, "tmp");
+    VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
+    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
+    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr);
+    Value *Idx = ConstantInt::get(Type::getInt32Ty(Context), 1);
+    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64);
+    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx);
     Result = Builder.CreateStore(Ops[1], Ops[0]);
     return true;
   }
   case IX86_BUILTIN_STORELPS: {
-    VectorType *v2f64 = VectorType::get(Type::DoubleTy, 2);
-    PointerType *f64Ptr = PointerType::getUnqual(Type::DoubleTy);
-    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr, "tmp");
-    Value *Idx = ConstantInt::get(Type::Int32Ty, 0);
-    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64, "tmp");
-    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx, "tmp");
+    VectorType *v2f64 = VectorType::get(Type::getDoubleTy(Context), 2);
+    const PointerType *f64Ptr = Type::getDoublePtrTy(Context);
+    Ops[0] = Builder.CreateBitCast(Ops[0], f64Ptr);
+    Value *Idx = ConstantInt::get(Type::getInt32Ty(Context), 0);
+    Ops[1] = Builder.CreateBitCast(Ops[1], v2f64);
+    Ops[1] = Builder.CreateExtractElement(Ops[1], Idx);
     Result = Builder.CreateStore(Ops[1], Ops[0]);
     return true;
   }
@@ -406,13 +418,13 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_VEC_INIT_V4HI:
     // Sometimes G++ promotes arguments to int.
     for (unsigned i = 0; i != 4; ++i)
-      Ops[i] = Builder.CreateIntCast(Ops[i], Type::Int16Ty, false, "tmp");
+      Ops[i] = Builder.CreateIntCast(Ops[i], Type::getInt16Ty(Context), false);
     Result = BuildVector(Ops[0], Ops[1], Ops[2], Ops[3], NULL);
     return true;
   case IX86_BUILTIN_VEC_INIT_V8QI:
     // Sometimes G++ promotes arguments to int.
     for (unsigned i = 0; i != 8; ++i)
-      Ops[i] = Builder.CreateIntCast(Ops[i], Type::Int8Ty, false, "tmp");
+      Ops[i] = Builder.CreateIntCast(Ops[i], Type::getInt8Ty(Context), false);
     Result = BuildVector(Ops[0], Ops[1], Ops[2], Ops[3],
                          Ops[4], Ops[5], Ops[6], Ops[7], NULL);
     return true;
@@ -424,13 +436,24 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
   case IX86_BUILTIN_VEC_EXT_V4SF:
   case IX86_BUILTIN_VEC_EXT_V8HI:
   case IX86_BUILTIN_VEC_EXT_V16QI:
-    Result = Builder.CreateExtractElement(Ops[0], Ops[1], "tmp");
+    Result = Builder.CreateExtractElement(Ops[0], Ops[1]);
+    return true;
+  case IX86_BUILTIN_VEC_SET_V16QI:
+    // Sometimes G++ promotes arguments to int.
+    Ops[1] = Builder.CreateIntCast(Ops[1], Type::getInt8Ty(Context), false);
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
     return true;
   case IX86_BUILTIN_VEC_SET_V4HI:
   case IX86_BUILTIN_VEC_SET_V8HI:
     // GCC sometimes doesn't produce the right element type.
-    Ops[1] = Builder.CreateIntCast(Ops[1], Type::Int16Ty, false, "tmp");
-    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2], "tmp");
+    Ops[1] = Builder.CreateIntCast(Ops[1], Type::getInt16Ty(Context), false);
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
+    return true;
+  case IX86_BUILTIN_VEC_SET_V4SI:
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
+    return true;
+  case IX86_BUILTIN_VEC_SET_V2DI:
+    Result = Builder.CreateInsertElement(Ops[0], Ops[1], Ops[2]);
     return true;
   case IX86_BUILTIN_CMPEQPS:
   case IX86_BUILTIN_CMPLTPS:
@@ -463,13 +486,13 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     case IX86_BUILTIN_CMPNGEPS: PredCode = 6; flip = true; break;
     case IX86_BUILTIN_CMPORDPS: PredCode = 7; break;
     }
-    Value *Pred = ConstantInt::get(Type::Int8Ty, PredCode);
+    Value *Pred = ConstantInt::get(Type::getInt8Ty(Context), PredCode);
     Value *Arg0 = Ops[0];
     Value *Arg1 = Ops[1];
     if (flip) std::swap(Arg0, Arg1);
     Value *CallOps[3] = { Arg0, Arg1, Pred };
-    Result = Builder.CreateCall(cmpps, CallOps, CallOps+3, "tmp");
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateCall(cmpps, CallOps, CallOps+3);
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_CMPEQSS:
@@ -496,10 +519,10 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     case IX86_BUILTIN_CMPNLESS:   PredCode = 6; break;
     case IX86_BUILTIN_CMPORDSS:   PredCode = 7; break;
     }
-    Value *Pred = ConstantInt::get(Type::Int8Ty, PredCode);
+    Value *Pred = ConstantInt::get(Type::getInt8Ty(Context), PredCode);
     Value *CallOps[3] = { Ops[0], Ops[1], Pred };
-    Result = Builder.CreateCall(cmpss, CallOps, CallOps+3, "tmp");
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateCall(cmpss, CallOps, CallOps+3);
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_CMPEQPD:
@@ -533,14 +556,14 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     case IX86_BUILTIN_CMPNGEPD:   PredCode = 6; flip = true; break;
     case IX86_BUILTIN_CMPORDPD:   PredCode = 7; break;
     }
-    Value *Pred = ConstantInt::get(Type::Int8Ty, PredCode);
+    Value *Pred = ConstantInt::get(Type::getInt8Ty(Context), PredCode);
     Value *Arg0 = Ops[0];
     Value *Arg1 = Ops[1];
     if (flip) std::swap(Arg0, Arg1);
 
     Value *CallOps[3] = { Arg0, Arg1, Pred };
-    Result = Builder.CreateCall(cmppd, CallOps, CallOps+3, "tmp");
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateCall(cmppd, CallOps, CallOps+3);
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_CMPEQSD:
@@ -565,31 +588,133 @@ bool TreeToLLVM::TargetIntrinsicLower(tree exp,
     case IX86_BUILTIN_CMPNLESD:   PredCode = 6; break;
     case IX86_BUILTIN_CMPORDSD:   PredCode = 7; break;
     }
-    Value *Pred = ConstantInt::get(Type::Int8Ty, PredCode);
+    Value *Pred = ConstantInt::get(Type::getInt8Ty(Context), PredCode);
     Value *CallOps[3] = { Ops[0], Ops[1], Pred };
-    Result = Builder.CreateCall(cmpsd, CallOps, CallOps+3, "tmp");
-    Result = Builder.CreateBitCast(Result, ResultType, "tmp");
+    Result = Builder.CreateCall(cmpsd, CallOps, CallOps+3);
+    Result = Builder.CreateBitCast(Result, ResultType);
     return true;
   }
   case IX86_BUILTIN_LDMXCSR: {
     Function *ldmxcsr =
       Intrinsic::getDeclaration(TheModule, Intrinsic::x86_sse_ldmxcsr);
-    Value *Ptr = CreateTemporary(Type::Int32Ty);
+    Value *Ptr = CreateTemporary(Type::getInt32Ty(Context));
     Builder.CreateStore(Ops[0], Ptr);
-    Ptr = Builder.CreateBitCast(Ptr, PointerType::getUnqual(Type::Int8Ty), "tmp");
+    Ptr = Builder.CreateBitCast(Ptr, Type::getInt8PtrTy(Context));
     Result = Builder.CreateCall(ldmxcsr, Ptr);
     return true;
   }
   case IX86_BUILTIN_STMXCSR: {
     Function *stmxcsr =
       Intrinsic::getDeclaration(TheModule, Intrinsic::x86_sse_stmxcsr);
-    Value *Ptr  = CreateTemporary(Type::Int32Ty);
-    Value *BPtr = Builder.CreateBitCast(Ptr, PointerType::getUnqual(Type::Int8Ty),
-                                        "tmp");
+    Value *Ptr  = CreateTemporary(Type::getInt32Ty(Context));
+    Value *BPtr = Builder.CreateBitCast(Ptr, Type::getInt8PtrTy(Context));
     Builder.CreateCall(stmxcsr, BPtr);
     
-    Result = Builder.CreateLoad(Ptr, "tmp");
+    Result = Builder.CreateLoad(Ptr);
     return true;
+  }
+  case IX86_BUILTIN_PALIGNR: {
+    if (ConstantInt *Elt = dyn_cast<ConstantInt>(Ops[2])) {
+
+      // In the header we multiply by 8, correct that back now.
+      unsigned shiftVal = (cast<ConstantInt>(Ops[2])->getZExtValue())/8;
+    
+      // If palignr is shifting the pair of input vectors less than 9 bytes,
+      // emit a shuffle instruction.
+      if (shiftVal <= 8) {
+        const llvm::Type *IntTy = Type::getInt32Ty(Context);
+        const llvm::Type *EltTy = Type::getInt8Ty(Context);
+        const llvm::Type *VecTy = VectorType::get(EltTy, 8);
+        
+        Ops[1] = Builder.CreateBitCast(Ops[1], VecTy);
+        Ops[0] = Builder.CreateBitCast(Ops[0], VecTy);
+
+        SmallVector<Constant*, 8> Indices;
+        for (unsigned i = 0; i != 8; ++i)
+          Indices.push_back(ConstantInt::get(IntTy, shiftVal + i));
+      
+        Value* SV = ConstantVector::get(Indices.begin(), Indices.size());
+        Result = Builder.CreateShuffleVector(Ops[1], Ops[0], SV, "palignr");
+        return true;
+      }
+    
+      // If palignr is shifting the pair of input vectors more than 8 but less
+      // than 16 bytes, emit a logical right shift of the destination.
+      if (shiftVal < 16) {
+        // MMX has these as 1 x i64 vectors for some odd optimization reasons.
+        const llvm::Type *EltTy = Type::getInt64Ty(Context);
+        const llvm::Type *VecTy = VectorType::get(EltTy, 1);
+      
+        Ops[0] = Builder.CreateBitCast(Ops[0], VecTy, "cast");
+        Ops[1] = ConstantInt::get(VecTy, (shiftVal-8) * 8);
+      
+        // create i32 constant
+        Function *F = Intrinsic::getDeclaration(TheModule,
+                                                Intrinsic::x86_mmx_psrl_q);
+        Result = Builder.CreateCall(F, &Ops[0], &Ops[0] + 2, "palignr");
+        return true;
+      }
+    
+      // If palignr is shifting the pair of vectors more than 32 bytes,
+      // emit zero.
+      Result = Constant::getNullValue(ResultType);
+      return true;
+    } else {
+      error("%Hmask must be an immediate", &EXPR_LOCATION(exp));
+      Result = Ops[0];
+      return true;
+    }
+  }
+  case IX86_BUILTIN_PALIGNR128: {
+    if (ConstantInt *Elt = dyn_cast<ConstantInt>(Ops[2])) {
+      
+      // In the header we multiply by 8, correct that back now.
+      unsigned shiftVal = (cast<ConstantInt>(Ops[2])->getZExtValue())/8;
+
+      // If palignr is shifting the pair of input vectors less than 17 bytes,
+      // emit a shuffle instruction.
+      if (shiftVal <= 16) {
+        const llvm::Type *IntTy = Type::getInt32Ty(Context);
+        const llvm::Type *EltTy = Type::getInt8Ty(Context);
+        const llvm::Type *VecTy = VectorType::get(EltTy, 16);
+        
+        Ops[1] = Builder.CreateBitCast(Ops[1], VecTy);
+        Ops[0] = Builder.CreateBitCast(Ops[0], VecTy);
+
+        llvm::SmallVector<Constant*, 16> Indices;
+        for (unsigned i = 0; i != 16; ++i)
+          Indices.push_back(ConstantInt::get(IntTy, shiftVal + i));
+
+        Value* SV = ConstantVector::get(Indices.begin(), Indices.size());
+        Result = Builder.CreateShuffleVector(Ops[1], Ops[0], SV, "palignr");
+        return true;
+      }
+
+      // If palignr is shifting the pair of input vectors more than 16 but less
+      // than 32 bytes, emit a logical right shift of the destination.
+      if (shiftVal < 32) {
+        const llvm::Type *EltTy = Type::getInt64Ty(Context);
+        const llvm::Type *VecTy = VectorType::get(EltTy, 2);
+        const llvm::Type *IntTy = Type::getInt32Ty(Context);
+
+        Ops[0] = Builder.CreateBitCast(Ops[0], VecTy, "cast");
+        Ops[1] = ConstantInt::get(IntTy, (shiftVal-16) * 8);
+
+        // create i32 constant
+        llvm::Function *F = Intrinsic::getDeclaration(TheModule,
+                                                  Intrinsic::x86_sse2_psrl_dq);        
+        Result = Builder.CreateCall(F, &Ops[0], &Ops[0] + 2, "palignr");
+        return true;
+      }
+
+      // If palignr is shifting the pair of vectors more than 32 bytes, emit zero.
+      Result = Constant::getNullValue(ResultType);
+      return true;
+    } else {
+      error("%Hmask must be an immediate", &EXPR_LOCATION(exp));
+      Result = Ops[0];
+      return true;
+    }
   }
   }
 
@@ -623,7 +748,7 @@ static bool llvm_x86_is_all_integer_types(const Type *Ty) {
   for (Type::subtype_iterator I = Ty->subtype_begin(), E = Ty->subtype_end();
        I != E; ++I) {
     const Type *STy = I->get();
-    if (!STy->isIntOrIntVector() && !isa<PointerType>(STy))
+    if (!STy->isIntOrIntVectorTy() && !STy->isPointerTy())
       return false;
   }
   return true;
@@ -655,11 +780,8 @@ llvm_x86_32_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
     // 32 and 64-bit integers are fine, as are float and double.  Long double
     // (which can be picked as the type for a union of 16 bytes) is not fine, 
     // as loads and stores of it get only 10 bytes.
-    if (EltTy == Type::Int32Ty ||
-        EltTy == Type::Int64Ty || 
-        EltTy == Type::FloatTy ||
-        EltTy == Type::DoubleTy ||
-        isa<PointerType>(EltTy)) {
+    if (EltTy->isIntegerTy(32) || EltTy->isIntegerTy(64) ||
+        EltTy->isFloatTy() || EltTy->isDoubleTy() || EltTy->isPointerTy()) {
       Elts.push_back(EltTy);
       continue;
     }
@@ -686,11 +808,10 @@ bool llvm_x86_should_pass_aggregate_as_fca(tree type, const Type *Ty) {
   // makes it ABI compatible for x86-64. Same for _Complex char and _Complex
   // short in 32-bit.
   const Type *EltTy = STy->getElementType(0);
-  return !((TARGET_64BIT && (EltTy->isInteger() ||
-                             EltTy == Type::FloatTy ||
-                             EltTy == Type::DoubleTy)) ||
-           EltTy == Type::Int16Ty ||
-           EltTy == Type::Int8Ty);
+  return !((TARGET_64BIT && (EltTy->isIntegerTy() ||
+                             EltTy->isFloatTy() ||
+                             EltTy->isDoubleTy())) ||
+           EltTy->isIntegerTy(16) || EltTy->isIntegerTy(8));
 }
 
 /* Target hook for llvm-abi.h. It returns true if an aggregate of the
@@ -729,14 +850,14 @@ static void count_num_registers_uses(std::vector<const Type*> &ScalarElts,
       else
         // All other vector scalar values are passed in XMM registers.
         ++NumXMMs;
-    } else if (Ty->isInteger() || isa<PointerType>(Ty)) {
+    } else if (Ty->isIntegerTy() || Ty->isPointerTy()) {
       ++NumGPRs;
-    } else if (Ty==Type::VoidTy) {
+    } else if (Ty->isVoidTy()) {
       // Padding bytes that are not passed anywhere
       ;
     } else {
       // Floating point scalar argument.
-      assert(Ty->isFloatingPoint() && Ty->isPrimitiveType() &&
+      assert(Ty->isFloatingPointTy() && Ty->isPrimitiveType() &&
              "Expecting a floating point primitive type!");
       if (Ty->getTypeID() == Type::FloatTyID
           || Ty->getTypeID() == Type::DoubleTyID)
@@ -811,15 +932,16 @@ llvm_x86_64_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
   if (!NumClasses)
     return false;
 
-  if (NumClasses == 1 && Class[0] == X86_64_INTEGERSI_CLASS)
-    // This will fit in one i32 register.
-    return false;
-
   for (int i = 0; i < NumClasses; ++i) {
     switch (Class[i]) {
     case X86_64_INTEGER_CLASS:
     case X86_64_INTEGERSI_CLASS:
-      Elts.push_back(Type::Int64Ty);
+      Elts.push_back(Type::getInt64Ty(Context));
+      totallyEmpty = false;
+      Bytes -= 8;
+      break;
+    case X86_64_POINTER_CLASS:
+      Elts.push_back(Type::getInt8PtrTy(Context));
       totallyEmpty = false;
       Bytes -= 8;
       break;
@@ -834,10 +956,10 @@ llvm_x86_64_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
       // 5. 2 x SSE, size is 16: 2 x Double.
       if ((NumClasses-i) == 1) {
         if (Bytes == 8) {
-          Elts.push_back(Type::DoubleTy);
+          Elts.push_back(Type::getDoubleTy(Context));
           Bytes -= 8;
         } else if (Bytes == 4) {
-          Elts.push_back (Type::FloatTy);
+          Elts.push_back (Type::getFloatTy(Context));
           Bytes -= 4;
         } else
           assert(0 && "Not yet handled!");
@@ -850,47 +972,50 @@ llvm_x86_64_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
               Ty = STy->getElementType(0);
           if (const VectorType *VTy = dyn_cast<VectorType>(Ty)) {
             if (VTy->getNumElements() == 2) {
-              if (VTy->getElementType()->isInteger()) {
-                Elts.push_back(VectorType::get(Type::Int64Ty, 2));
+              if (VTy->getElementType()->isIntegerTy()) {
+                Elts.push_back(VectorType::get(Type::getInt64Ty(Context), 2));
               } else {
-                Elts.push_back(VectorType::get(Type::DoubleTy, 2));
+                Elts.push_back(VectorType::get(Type::getDoubleTy(Context), 2));
               }
               Bytes -= 8;
             } else {
               assert(VTy->getNumElements() == 4);
-              if (VTy->getElementType()->isInteger()) {
-                Elts.push_back(VectorType::get(Type::Int32Ty, 4));
+              if (VTy->getElementType()->isIntegerTy()) {
+                Elts.push_back(VectorType::get(Type::getInt32Ty(Context), 4));
               } else {
-                Elts.push_back(VectorType::get(Type::FloatTy, 4));
+                Elts.push_back(VectorType::get(Type::getFloatTy(Context), 4));
               }
               Bytes -= 4;
             }
           } else if (llvm_x86_is_all_integer_types(Ty)) {
-            Elts.push_back(VectorType::get(Type::Int32Ty, 4));
+            Elts.push_back(VectorType::get(Type::getInt32Ty(Context), 4));
             Bytes -= 4;
           } else {
-            Elts.push_back(VectorType::get(Type::FloatTy, 4));
+            Elts.push_back(VectorType::get(Type::getFloatTy(Context), 4));
             Bytes -= 4;
           }
         } else if (Class[i+1] == X86_64_SSESF_CLASS) {
           assert(Bytes == 12 && "Not yet handled!");
-          Elts.push_back(Type::DoubleTy);
-          Elts.push_back(Type::FloatTy);
+          Elts.push_back(Type::getDoubleTy(Context));
+          Elts.push_back(Type::getFloatTy(Context));
           Bytes -= 12;
         } else if (Class[i+1] == X86_64_SSE_CLASS) {
-          Elts.push_back(Type::DoubleTy);
-          Elts.push_back(Type::DoubleTy);
+          Elts.push_back(Type::getDoubleTy(Context));
+          Elts.push_back(Type::getDoubleTy(Context));
           Bytes -= 16;
         } else if (Class[i+1] == X86_64_SSEDF_CLASS && Bytes == 16) {
-          Elts.push_back(VectorType::get(Type::FloatTy, 2));
-          Elts.push_back(Type::DoubleTy);
+          Elts.push_back(VectorType::get(Type::getFloatTy(Context), 2));
+          Elts.push_back(Type::getDoubleTy(Context));
         } else if (Class[i+1] == X86_64_INTEGER_CLASS) {
-          Elts.push_back(VectorType::get(Type::FloatTy, 2));
-          Elts.push_back(Type::Int64Ty);
+          Elts.push_back(VectorType::get(Type::getFloatTy(Context), 2));
+          Elts.push_back(Type::getInt64Ty(Context));
+        } else if (Class[i+1] == X86_64_POINTER_CLASS) {
+          Elts.push_back(VectorType::get(Type::getFloatTy(Context), 2));
+          Elts.push_back(Type::getInt8PtrTy(Context));
         } else if (Class[i+1] == X86_64_NO_CLASS) {
           // padding bytes, don't pass
-          Elts.push_back(Type::DoubleTy);
-          Elts.push_back(Type::VoidTy);
+          Elts.push_back(Type::getDoubleTy(Context));
+          Elts.push_back(Type::getVoidTy(Context));
           Bytes -= 16;
         } else
           assert(0 && "Not yet handled!");
@@ -900,12 +1025,12 @@ llvm_x86_64_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
       break;
     case X86_64_SSESF_CLASS:
       totallyEmpty = false;
-      Elts.push_back(Type::FloatTy);
+      Elts.push_back(Type::getFloatTy(Context));
       Bytes -= 4;
       break;
     case X86_64_SSEDF_CLASS:
       totallyEmpty = false;
-      Elts.push_back(Type::DoubleTy);
+      Elts.push_back(Type::getDoubleTy(Context));
       Bytes -= 8;
       break;
     case X86_64_X87_CLASS:
@@ -915,7 +1040,7 @@ llvm_x86_64_should_pass_aggregate_in_mixed_regs(tree TreeType, const Type *Ty,
     case X86_64_NO_CLASS:
       // Padding bytes that are not passed (unless the entire object consists
       // of padding)
-      Elts.push_back(Type::VoidTy);
+      Elts.push_back(Type::getVoidTy(Context));
       Bytes -= 8;
       break;
     default: assert(0 && "Unexpected register class!");
@@ -1054,7 +1179,8 @@ static bool llvm_suitable_multiple_ret_value_type(const Type *Ty,
     return false;
 
   if (NumClasses == 1 && 
-      (Class[0] == X86_64_INTEGERSI_CLASS || Class[0] == X86_64_INTEGER_CLASS))
+      (Class[0] == X86_64_INTEGERSI_CLASS || Class[0] == X86_64_INTEGER_CLASS ||
+       Class[0] == X86_64_POINTER_CLASS))
     // This will fit in one i64 register.
     return false;
 
@@ -1073,15 +1199,15 @@ static bool llvm_suitable_multiple_ret_value_type(const Type *Ty,
 const Type *llvm_x86_scalar_type_for_struct_return(tree type, unsigned *Offset) {
   *Offset = 0;
   const Type *Ty = ConvertType(type);
-  unsigned Size = getTargetData().getTypePaddedSize(Ty);
+  unsigned Size = getTargetData().getTypeAllocSize(Ty);
   if (Size == 0)
-    return Type::VoidTy;
+    return Type::getVoidTy(Context);
   else if (Size == 1)
-    return Type::Int8Ty;
+    return Type::getInt8Ty(Context);
   else if (Size == 2)
-    return Type::Int16Ty;
+    return Type::getInt16Ty(Context);
   else if (Size <= 4)
-    return Type::Int32Ty;
+    return Type::getInt32Ty(Context);
 
   // Check if Ty should be returned using multiple value return instruction.
   if (llvm_suitable_multiple_ret_value_type(Ty, type))
@@ -1094,23 +1220,26 @@ const Type *llvm_x86_scalar_type_for_struct_return(tree type, unsigned *Offset) 
     enum machine_mode Mode = ix86_getNaturalModeForType(type);
     int NumClasses = ix86_ClassifyArgument(Mode, type, Class, 0);
     if (NumClasses == 0)
-      return Type::Int64Ty;
+      return Type::getInt64Ty(Context);
 
     if (NumClasses == 1) {
       if (Class[0] == X86_64_INTEGERSI_CLASS ||
-          Class[0] == X86_64_INTEGER_CLASS) {
+          Class[0] == X86_64_INTEGER_CLASS ||
+          Class[0] == X86_64_POINTER_CLASS) {
         // one int register
         HOST_WIDE_INT Bytes =
           (Mode == BLKmode) ? int_size_in_bytes(type) : 
                               (int) GET_MODE_SIZE(Mode);
+        if (Bytes==8 && Class[0] == X86_64_POINTER_CLASS)
+          return Type::getInt8PtrTy(Context);
         if (Bytes>4)
-          return Type::Int64Ty;
+          return Type::getInt64Ty(Context);
         else if (Bytes>2)
-          return Type::Int32Ty;
+          return Type::getInt32Ty(Context);
         else if (Bytes>1)
-          return Type::Int16Ty;
+          return Type::getInt16Ty(Context);
         else
-          return Type::Int8Ty;
+          return Type::getInt8Ty(Context);
       }
       assert(0 && "Unexpected type!"); 
     }
@@ -1119,22 +1248,26 @@ const Type *llvm_x86_scalar_type_for_struct_return(tree type, unsigned *Offset) 
         if (Class[0] == X86_64_INTEGER_CLASS || 
             Class[0] == X86_64_NO_CLASS ||
             Class[0] == X86_64_INTEGERSI_CLASS)
-          return Type::Int64Ty;
+          return Type::getInt64Ty(Context);
+        else if (Class[0] == X86_64_POINTER_CLASS)
+          return Type::getInt8PtrTy(Context);
         else if (Class[0] == X86_64_SSE_CLASS || Class[0] == X86_64_SSEDF_CLASS)
-          return Type::DoubleTy;
+          return Type::getDoubleTy(Context);
         else if (Class[0] == X86_64_SSESF_CLASS)
-          return Type::FloatTy;
+          return Type::getFloatTy(Context);
         assert(0 && "Unexpected type!");
       }
       if (Class[0] == X86_64_NO_CLASS) {
         *Offset = 8;
         if (Class[1] == X86_64_INTEGERSI_CLASS ||
             Class[1] == X86_64_INTEGER_CLASS)
-          return Type::Int64Ty;
+          return Type::getInt64Ty(Context);
+        else if (Class[1] == X86_64_POINTER_CLASS)
+          return Type::getInt8PtrTy(Context);
         else if (Class[1] == X86_64_SSE_CLASS || Class[1] == X86_64_SSEDF_CLASS)
-          return Type::DoubleTy;
+          return Type::getDoubleTy(Context);
         else if (Class[1] == X86_64_SSESF_CLASS)
-          return Type::FloatTy;
+          return Type::getFloatTy(Context);
         assert(0 && "Unexpected type!"); 
       }
       assert(0 && "Unexpected type!");
@@ -1142,11 +1275,11 @@ const Type *llvm_x86_scalar_type_for_struct_return(tree type, unsigned *Offset) 
     assert(0 && "Unexpected type!");
   } else {
     if (Size <= 8)
-      return Type::Int64Ty;
+      return Type::getInt64Ty(Context);
     else if (Size <= 16)
-      return IntegerType::get(128);
+      return IntegerType::get(Context, 128);
     else if (Size <= 32)
-      return IntegerType::get(256);
+      return IntegerType::get(Context, 256);
   }
   return NULL;
 }
@@ -1174,6 +1307,9 @@ llvm_x86_64_get_multiple_return_reg_classes(tree TreeType, const Type *Ty,
   if (NumClasses == 1 && Class[0] == X86_64_INTEGER_CLASS)
      assert(0 && "This type does not need multiple return registers!");
 
+  if (NumClasses == 1 && Class[0] == X86_64_POINTER_CLASS)
+     assert(0 && "This type does not need multiple return registers!");
+
   // classify_argument uses a single X86_64_NO_CLASS as a special case for
   // empty structs. Recognize it and don't add any return values in that
   // case.
@@ -1184,7 +1320,11 @@ llvm_x86_64_get_multiple_return_reg_classes(tree TreeType, const Type *Ty,
     switch (Class[i]) {
     case X86_64_INTEGER_CLASS:
     case X86_64_INTEGERSI_CLASS:
-      Elts.push_back(Type::Int64Ty);
+      Elts.push_back(Type::getInt64Ty(Context));
+      Bytes -= 8;
+      break;
+    case X86_64_POINTER_CLASS:
+      Elts.push_back(Type::getInt8PtrTy(Context));
       Bytes -= 8;
       break;
     case X86_64_SSE_CLASS:
@@ -1198,10 +1338,10 @@ llvm_x86_64_get_multiple_return_reg_classes(tree TreeType, const Type *Ty,
       // 6. 1 x SSE, 1 x NO:  Second is padding, pass as double.
       if ((NumClasses-i) == 1) {
         if (Bytes == 8) {
-          Elts.push_back(Type::DoubleTy);
+          Elts.push_back(Type::getDoubleTy(Context));
           Bytes -= 8;
         } else if (Bytes == 4) {
-          Elts.push_back(Type::FloatTy);
+          Elts.push_back(Type::getFloatTy(Context));
           Bytes -= 4;
         } else
           assert(0 && "Not yet handled!");
@@ -1214,43 +1354,46 @@ llvm_x86_64_get_multiple_return_reg_classes(tree TreeType, const Type *Ty,
               Ty = STy->getElementType(0);
           if (const VectorType *VTy = dyn_cast<VectorType>(Ty)) {
             if (VTy->getNumElements() == 2) {
-              if (VTy->getElementType()->isInteger())
-                Elts.push_back(VectorType::get(Type::Int64Ty, 2));
+              if (VTy->getElementType()->isIntegerTy())
+                Elts.push_back(VectorType::get(Type::getInt64Ty(Context), 2));
               else
-                Elts.push_back(VectorType::get(Type::DoubleTy, 2));
+                Elts.push_back(VectorType::get(Type::getDoubleTy(Context), 2));
               Bytes -= 8;
             } else {
               assert(VTy->getNumElements() == 4);
-              if (VTy->getElementType()->isInteger())
-                Elts.push_back(VectorType::get(Type::Int32Ty, 4));
+              if (VTy->getElementType()->isIntegerTy())
+                Elts.push_back(VectorType::get(Type::getInt32Ty(Context), 4));
               else
-                Elts.push_back(VectorType::get(Type::FloatTy, 4));
+                Elts.push_back(VectorType::get(Type::getFloatTy(Context), 4));
               Bytes -= 4;
             }
           } else if (llvm_x86_is_all_integer_types(Ty)) {
-            Elts.push_back(VectorType::get(Type::Int32Ty, 4));
+            Elts.push_back(VectorType::get(Type::getInt32Ty(Context), 4));
             Bytes -= 4;
           } else {
-            Elts.push_back(VectorType::get(Type::FloatTy, 4));
+            Elts.push_back(VectorType::get(Type::getFloatTy(Context), 4));
             Bytes -= 4;
           }
         } else if (Class[i+1] == X86_64_SSESF_CLASS) {
           assert(Bytes == 12 && "Not yet handled!");
-          Elts.push_back(Type::DoubleTy);
-          Elts.push_back(Type::FloatTy);
+          Elts.push_back(Type::getDoubleTy(Context));
+          Elts.push_back(Type::getFloatTy(Context));
           Bytes -= 12;
         } else if (Class[i+1] == X86_64_SSE_CLASS) {
-          Elts.push_back(Type::DoubleTy);
-          Elts.push_back(Type::DoubleTy);
+          Elts.push_back(Type::getDoubleTy(Context));
+          Elts.push_back(Type::getDoubleTy(Context));
           Bytes -= 16;
         } else if (Class[i+1] == X86_64_SSEDF_CLASS && Bytes == 16) {
-          Elts.push_back(VectorType::get(Type::FloatTy, 2));
-          Elts.push_back(Type::DoubleTy);
+          Elts.push_back(VectorType::get(Type::getFloatTy(Context), 2));
+          Elts.push_back(Type::getDoubleTy(Context));
         } else if (Class[i+1] == X86_64_INTEGER_CLASS) {
-          Elts.push_back(VectorType::get(Type::FloatTy, 2));
-          Elts.push_back(Type::Int64Ty);
+          Elts.push_back(VectorType::get(Type::getFloatTy(Context), 2));
+          Elts.push_back(Type::getInt64Ty(Context));
+        } else if (Class[i+1] == X86_64_POINTER_CLASS) {
+          Elts.push_back(VectorType::get(Type::getFloatTy(Context), 2));
+          Elts.push_back(Type::getInt8PtrTy(Context));
         } else if (Class[i+1] == X86_64_NO_CLASS) {
-          Elts.push_back(Type::DoubleTy);
+          Elts.push_back(Type::getDoubleTy(Context));
           Bytes -= 16;
         } else {
           assert(0 && "Not yet handled!");
@@ -1260,21 +1403,21 @@ llvm_x86_64_get_multiple_return_reg_classes(tree TreeType, const Type *Ty,
         assert(0 && "Not yet handled!");
       break;
     case X86_64_SSESF_CLASS:
-      Elts.push_back(Type::FloatTy);
+      Elts.push_back(Type::getFloatTy(Context));
       Bytes -= 4;
       break;
     case X86_64_SSEDF_CLASS:
-      Elts.push_back(Type::DoubleTy);
+      Elts.push_back(Type::getDoubleTy(Context));
       Bytes -= 8;
       break;
     case X86_64_X87_CLASS:
     case X86_64_X87UP_CLASS:
     case X86_64_COMPLEX_X87_CLASS:
-      Elts.push_back(Type::X86_FP80Ty);
+      Elts.push_back(Type::getX86_FP80Ty(Context));
       break;
     case X86_64_NO_CLASS:
       // padding bytes.
-      Elts.push_back(Type::Int64Ty);
+      Elts.push_back(Type::getInt64Ty(Context));
       break;
     default: assert(0 && "Unexpected register class!");
     }
@@ -1289,19 +1432,18 @@ const Type *llvm_x86_aggr_type_for_struct_return(tree type) {
     return NULL;
 
   const StructType *STy = cast<StructType>(Ty);
-  unsigned NumElements = STy->getNumElements();
   std::vector<const Type *> ElementTypes;
 
   // Special handling for _Complex.
   if (llvm_x86_should_not_return_complex_in_memory(type)) {
-    ElementTypes.push_back(Type::X86_FP80Ty);
-    ElementTypes.push_back(Type::X86_FP80Ty);
-    return StructType::get(ElementTypes, STy->isPacked());
+    ElementTypes.push_back(Type::getX86_FP80Ty(Context));
+    ElementTypes.push_back(Type::getX86_FP80Ty(Context));
+    return StructType::get(Context, ElementTypes, STy->isPacked());
   } 
 
   std::vector<const Type*> GCCElts;
   llvm_x86_64_get_multiple_return_reg_classes(type, Ty, GCCElts);
-  return StructType::get(GCCElts, false);
+  return StructType::get(Context, GCCElts, false);
 }
 
 // llvm_x86_extract_mrv_array_element - Helper function that help extract 
@@ -1321,12 +1463,12 @@ static void llvm_x86_extract_mrv_array_element(Value *Src, Value *Dest,
   Value *EVI = Builder.CreateExtractValue(Src, SrcFieldNo, "mrv_gr");
   const StructType *STy = cast<StructType>(Src->getType());
   llvm::Value *Idxs[3];
-  Idxs[0] = ConstantInt::get(llvm::Type::Int32Ty, 0);
-  Idxs[1] = ConstantInt::get(llvm::Type::Int32Ty, DestFieldNo);
-  Idxs[2] = ConstantInt::get(llvm::Type::Int32Ty, DestElemNo);
+  Idxs[0] = ConstantInt::get(llvm::Type::getInt32Ty(Context), 0);
+  Idxs[1] = ConstantInt::get(llvm::Type::getInt32Ty(Context), DestFieldNo);
+  Idxs[2] = ConstantInt::get(llvm::Type::getInt32Ty(Context), DestElemNo);
   Value *GEP = Builder.CreateGEP(Dest, Idxs, Idxs+3, "mrv_gep");
-  if (isa<VectorType>(STy->getElementType(SrcFieldNo))) {
-    Value *ElemIndex = ConstantInt::get(Type::Int32Ty, SrcElemNo);
+  if (STy->getElementType(SrcFieldNo)->isVectorTy()) {
+    Value *ElemIndex = ConstantInt::get(Type::getInt32Ty(Context), SrcElemNo);
     Value *EVIElem = Builder.CreateExtractElement(EVI, ElemIndex, "mrv");
     Builder.CreateStore(EVIElem, GEP, isVolatile);
   } else {
@@ -1359,12 +1501,12 @@ void llvm_x86_extract_multiple_return_value(Value *Src, Value *Dest,
 
     Value *EVI = Builder.CreateExtractValue(Src, 0, "mrv_gr");
 
-    Value *E0Index = ConstantInt::get(Type::Int32Ty, 0);
+    Value *E0Index = ConstantInt::get(Type::getInt32Ty(Context), 0);
     Value *EVI0 = Builder.CreateExtractElement(EVI, E0Index, "mrv.v");
     Value *GEP0 = Builder.CreateStructGEP(Dest, 0, "mrv_gep");
     Builder.CreateStore(EVI0, GEP0, isVolatile);
 
-    Value *E1Index = ConstantInt::get(Type::Int32Ty, 1);
+    Value *E1Index = ConstantInt::get(Type::getInt32Ty(Context), 1);
     Value *EVI1 = Builder.CreateExtractElement(EVI, E1Index, "mrv.v");
     Value *GEP1 = Builder.CreateStructGEP(Dest, 1, "mrv_gep");
     Builder.CreateStore(EVI1, GEP1, isVolatile);
@@ -1389,18 +1531,18 @@ void llvm_x86_extract_multiple_return_value(Value *Src, Value *Dest,
     } 
 
     // Special treatement for _Complex.
-    if (const StructType *ComplexType = dyn_cast<StructType>(DestElemType)) {
+    if (DestElemType->isStructTy()) {
       llvm::Value *Idxs[3];
-      Idxs[0] = ConstantInt::get(llvm::Type::Int32Ty, 0);
-      Idxs[1] = ConstantInt::get(llvm::Type::Int32Ty, DNO);
+      Idxs[0] = ConstantInt::get(llvm::Type::getInt32Ty(Context), 0);
+      Idxs[1] = ConstantInt::get(llvm::Type::getInt32Ty(Context), DNO);
 
-      Idxs[2] = ConstantInt::get(llvm::Type::Int32Ty, 0);
+      Idxs[2] = ConstantInt::get(llvm::Type::getInt32Ty(Context), 0);
       Value *GEP = Builder.CreateGEP(Dest, Idxs, Idxs+3, "mrv_gep");
       Value *EVI = Builder.CreateExtractValue(Src, 0, "mrv_gr");
       Builder.CreateStore(EVI, GEP, isVolatile);
       ++SNO;
 
-      Idxs[2] = ConstantInt::get(llvm::Type::Int32Ty, 1);
+      Idxs[2] = ConstantInt::get(llvm::Type::getInt32Ty(Context), 1);
       GEP = Builder.CreateGEP(Dest, Idxs, Idxs+3, "mrv_gep");
       EVI = Builder.CreateExtractValue(Src, 1, "mrv_gr");
       Builder.CreateStore(EVI, GEP, isVolatile);
@@ -1438,53 +1580,6 @@ void llvm_x86_extract_multiple_return_value(Value *Src, Value *Dest,
   }
 }
 
-/// llvm_store_scalar_argument - Store scalar argument ARGVAL of type
-/// LLVMTY at location LOC.
-void llvm_x86_store_scalar_argument(Value *Loc, Value *ArgVal,
-                                    const llvm::Type *LLVMTy,
-                                    unsigned RealSize,
-                                    LLVMBuilder &Builder) {
-  if (RealSize) {
-    // Do byte wise store because actaul argument type does not match LLVMTy.
-    Loc = Builder.CreateBitCast(Loc, 
-                                PointerType::getUnqual(llvm::Type::Int8Ty), "bc");
-    Value *ShAmt = ConstantInt::get(LLVMTy, 8);
-    for (unsigned i = 0; i < RealSize; ++i) {
-      Value *AVT = Builder.CreateTrunc(ArgVal, llvm::Type::Int8Ty, "byte");
-      Builder.CreateStore(AVT, Loc);
-      ArgVal = Builder.CreateLShr(ArgVal, ShAmt, "shft");
-      Loc = Builder.CreateGEP(Loc, ConstantInt::get(llvm::Type::Int32Ty, 1), 
-                              "Loc");
-    }
-  } else {
-    // This cast only involves pointers, therefore BitCast.
-    Loc = Builder.CreateBitCast(Loc, PointerType::getUnqual(LLVMTy), "tmp");
-    Builder.CreateStore(ArgVal, Loc);
-  }
-}
-
-/// llvm_load_scalar_argument - Load value located at LOC.
-Value *llvm_x86_load_scalar_argument(Value *L,
-                                     const llvm::Type *LLVMTy,
-                                     unsigned RealSize,
-                                     LLVMBuilder &Builder) {
-  Value *Loc = NULL;
-  L = Builder.CreateBitCast(L, PointerType::getUnqual(llvm::Type::Int8Ty), "bc");
-  // Load each byte individually.
-  for (unsigned i = 0; i < RealSize; ++i) {
-    Value *V = Builder.CreateLoad(L, "val");
-    Value *V2 = Builder.CreateZExt(V, LLVMTy);
-    if (Loc == NULL)
-      Loc = V2;
-    else {
-      Value *ShAmt = ConstantInt::get(LLVMTy, 8*i);
-      Loc = Builder.CreateOr(Loc, Builder.CreateShl(V2, ShAmt, "shl"), "loc");
-    }
-    L = Builder.CreateGEP(L, ConstantInt::get(llvm::Type::Int32Ty, 1), "gep");
-  }
-  return Loc;
-}
-
 /// llvm_x86_should_pass_aggregate_in_integer_regs - x86-32 is same as the
 /// default.  x86-64 detects the case where a type is 16 bytes long but
 /// only 8 of them are passed, the rest being padding (*size is set to 8
@@ -1500,7 +1595,8 @@ bool llvm_x86_should_pass_aggregate_in_integer_regs(tree type, unsigned *size,
     int NumClasses = ix86_ClassifyArgument(Mode, type, Class, 0);
     *DontCheckAlignment= true;
     if (NumClasses == 1 && (Class[0] == X86_64_INTEGER_CLASS ||
-                            Class[0] == X86_64_INTEGERSI_CLASS)) {
+                            Class[0] == X86_64_INTEGERSI_CLASS ||
+                            Class[0] == X86_64_POINTER_CLASS)) {
       // one int register
       HOST_WIDE_INT Bytes =
         (Mode == BLKmode) ? int_size_in_bytes(type) : (int) GET_MODE_SIZE(Mode);
@@ -1513,8 +1609,10 @@ bool llvm_x86_should_pass_aggregate_in_integer_regs(tree type, unsigned *size,
       return true;
     }
     if (NumClasses == 2 && (Class[0] == X86_64_INTEGERSI_CLASS ||
-                            Class[0] == X86_64_INTEGER_CLASS)) {
-      if (Class[1] == X86_64_INTEGER_CLASS) {
+                            Class[0] == X86_64_INTEGER_CLASS ||
+                            Class[0] == X86_64_POINTER_CLASS)) {
+      if (Class[1] == X86_64_INTEGER_CLASS ||
+          Class[1] == X86_64_POINTER_CLASS) {
         // 16 byte object, 2 int registers
         *size = 16;
         return true;

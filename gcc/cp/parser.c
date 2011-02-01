@@ -2819,7 +2819,11 @@ objc_cp_parser_at_property (cp_parser *parser)
 	/* Consume ')' */
 	cp_lexer_consume_token (parser->lexer);
     }
-    objc_cp_parse_property_decl (parser);
+  /* APPLE LOCAL begin weak_import on property 7496972 */
+  note_objc_property_decl_context ();
+  objc_cp_parse_property_decl (parser);
+  note_end_objc_property_decl_context ();
+  /* APPLE LOCAL end weak_import on property 7496972 */
 }
 /* APPLE LOCAL end C* property (Radar 4436866, 4591909) */
 
@@ -7095,6 +7099,8 @@ cp_parser_compound_statement (cp_parser *parser, tree in_statement_expr,
       iasm_state = iasm_asm;
       inside_iasm_block = true;
       iasm_kill_regs = true;
+      /* LLVM LOCAL */
+      iasm_label_counter = 0;
       cp_parser_iasm_line_seq_opt (parser);
       iasm_state = iasm_none;
       iasm_end_block ();
@@ -11175,13 +11181,25 @@ cp_parser_elaborated_type_specifier (cp_parser* parser,
       if (parser->scope)
 	{
 	  tree decl;
+	  /* LLVM LOCAL begin mainline */
+	  tree ambiguous_decls;
+	  /* LLVM LOCAL end mainline */
 
 	  decl = cp_parser_lookup_name (parser, identifier,
 					tag_type,
 					/*is_template=*/false,
 					/*is_namespace=*/false,
 					/*check_dependency=*/true,
-					/*ambiguous_decls=*/NULL);
+					/* LLVM LOCAL begin mainline */
+					&ambiguous_decls);
+	                                /* LLVM LOCAL end mainline */
+
+	  /* LLVM LOCAL begin mainline */
+	  /* If the lookup was ambiguous, an error will already have been
+	     issued.  */
+	  if (ambiguous_decls)
+	    return error_mark_node;
+	  /* LLVM LOCAL end mainline */
 
 	  /* If we are parsing friend declaration, DECL may be a
 	     TEMPLATE_DECL tree node here.  However, we need to check
@@ -18063,6 +18081,8 @@ cp_parser_iasm_compound_statement (cp_parser *parser)
   iasm_state = iasm_asm;
   inside_iasm_block = true;
   iasm_kill_regs = true;
+  /* LLVM LOCAL */
+  iasm_label_counter = 0;
   if (!cp_parser_require (parser, CPP_OPEN_BRACE, "`{'"))
     return error_mark_node;
   /* Begin the compound-statement.  */
@@ -18087,6 +18107,8 @@ cp_parser_iasm_top_statement (cp_parser *parser)
   iasm_state = iasm_asm;
   inside_iasm_block = true;
   iasm_kill_regs = true;
+  /* LLVM LOCAL */
+  iasm_label_counter = 0;
   /* Begin the compound-statement.  */
   compound_stmt = begin_compound_stmt (/*has_no_scope=*/false);
   if (!cp_lexer_iasm_bol (parser->lexer))
@@ -20577,6 +20599,10 @@ cp_block_requires_copying (tree exp)
   {0, sizeof(struct literal_block_n), 
    copy_helper_block_1, // only if block BLOCK_HAS_COPY_DISPOSE
    destroy_helper_block_1, // only if block BLOCK_HAS_COPY_DISPOSE
+   // APPLE LOCAL begin radar 8143947
+   // const char *signature;   // the block signature set to 0
+   // const char *layout;      // reserved set to 0
+   // APPLE LOCAL end radar 8143947
   }
 */
 static tree
@@ -20619,6 +20645,15 @@ build_descriptor_block_decl (tree block_struct_type, struct block_sema_info *blo
       helper_addr = convert (ptr_type_node, helper_addr);
       CONSTRUCTOR_APPEND_ELT(impl_v, NULL_TREE, helper_addr);
     }
+  /* APPLE LOCAL begin radar 8143947 */
+  /* signature field is set to 0 */
+  CONSTRUCTOR_APPEND_ELT(impl_v, NULL_TREE, 
+                         build_int_cst (build_pointer_type (char_type_node), 0));
+  /* layout field is set to 0 */
+  CONSTRUCTOR_APPEND_ELT(impl_v, NULL_TREE, 
+                         build_int_cst (build_pointer_type (char_type_node), 0));
+  /* APPLE LOCAL end radar 8143947 */
+
   /* Create a CONSTRUCTOR to represent the braced-initializer.  */
   constructor = make_node (CONSTRUCTOR);
   CONSTRUCTOR_ELTS (constructor) = impl_v;
@@ -20651,6 +20686,10 @@ build_descriptor_block_decl (tree block_struct_type, struct block_sema_info *blo
         {
           unsigned long int reserved;
 	  unsigned long int Size;
+          // APPLE LOCAL begin radar 8143927
+          const char *signature;   // the block signature
+          const char *layout;      // reserved
+          // APPLE LOCAL end radar 8143927
 	} *__descriptor;
    };
 
@@ -20849,7 +20888,8 @@ build_block_struct_type (struct block_sema_info * block_impl)
 /**
  build_block_struct_initlist - builds the initializer list:
  { &_NSConcreteStackBlock or &_NSConcreteGlobalBlock // __isa,
-   BLOCK_HAS_DESCRIPTOR | BLOCK_HAS_COPY_DISPOSE | BLOCK_IS_GLOBAL // __flags,
+   BLOCK_USE_STRET | BLOCK_HAS_COPY_DISPOSE | BLOCK_IS_GLOBAL // __flags,
+   | BLOCK_HAS_SIGNATURE // __flags
    0, // __reserved,
    &helper_1, // __FuncPtr,
    &static_descriptor_variable // __descriptor,
@@ -20866,7 +20906,8 @@ build_block_struct_initlist (tree block_struct_type,
 			     struct block_sema_info *block_impl)
 {
   tree expr, chain, helper_addr;
-  unsigned flags = BLOCK_HAS_DESCRIPTOR;
+  /* APPLE LOCAL radar 7735196 */
+  unsigned flags = BLOCK_HAS_SIGNATURE;
   static tree NSConcreteStackBlock_decl = NULL_TREE;
   static tree NSConcreteGlobalBlock_decl = NULL_TREE;
   VEC(constructor_elt,gc) *impl_v = NULL;
@@ -20882,6 +20923,10 @@ build_block_struct_initlist (tree block_struct_type,
   if (block_impl->BlockImportsCxxObjects)
     flags |= BLOCK_HAS_CXX_OBJ;
   /* APPLE LOCAL end radar 6214617 */
+/* APPLE LOCAL begin radar 7735196 */
+  if (block_impl->return_type && aggregate_value_p(block_impl->return_type, 0))
+    flags |= BLOCK_USE_STRET;
+  /* APPLE LOCAL end 7735196 */
   /* APPLE LOCAL begin radar 6230297 */
   if (!current_function_decl ||
       (block_impl->block_ref_decl_list == NULL_TREE &&
@@ -21066,12 +21111,6 @@ build_block_literal_tmp (const char *name,
     TREE_STATIC (block_holder_tmp_decl) = 1;
   }
   cp_finish_decl (block_holder_tmp_decl, constructor, 0, 0, LOOKUP_ONLYCONVERTING);
-  /* LLVM LOCAL begin radar 5865221 */
-#ifdef ENABLE_LLVM
-  TREE_CONSTANT (block_holder_tmp_decl) = 1;
-  TREE_READONLY (block_holder_tmp_decl) = 1;
-#endif
-  /* LLVM LOCAL end radar 5865221 */
   return block_holder_tmp_decl;
 }
 /* APPLE LOCAL end radar 6169527 */
@@ -21574,6 +21613,12 @@ cp_parser_block_literal_expr (cp_parser* parser)
     build_helper_func_decl (get_identifier (name), s_ftype);
     DECL_CONTEXT (cur_block->copy_helper_func_decl) = current_function_decl;
     synth_copy_helper_block_func (cur_block);
+    /* LLVM LOCAL begin Copy helper function should not have source
+       location.  */
+    DECL_SOURCE_FILE (cur_block->copy_helper_func_decl) = NULL;
+    DECL_SOURCE_LINE (cur_block->copy_helper_func_decl) = 0;
+    /* LLVM LOCAL end Copy helper function should not have source
+       location.  */
 
     /* void destroy_helper_block (struct block*); */
     s_ftype = build_function_type (void_type_node,
@@ -21584,6 +21629,12 @@ cp_parser_block_literal_expr (cp_parser* parser)
     build_helper_func_decl (get_identifier (name), s_ftype);
     DECL_CONTEXT (cur_block->destroy_helper_func_decl) = current_function_decl;
     synth_destroy_helper_block_func (cur_block);
+    /* LLVM LOCAL begin Destroy helper function should not have source
+       location.  */
+    DECL_SOURCE_FILE (cur_block->destroy_helper_func_decl) = NULL;
+    DECL_SOURCE_LINE (cur_block->destroy_helper_func_decl) = 0;
+    /* LLVM LOCAL end Destroy helper function should not have source
+       location.  */
     pop_lang_context ();
   }
 
@@ -21696,7 +21747,17 @@ build_block_byref_decl (tree name, tree decl, tree exp)
 
   /* Current scope must be that of the main function body. */
   /* FIXME gcc_assert (current_scope->function_body);*/
-  pushdecl (byref_decl);
+  /* LLVM LOCAL begin 7387470 */
+  /* Find the scope for function body (outer-most scope) and insert
+     this variable in that scope. This is to avoid duplicate
+     declaration of the save variable. */
+  {
+    struct cp_binding_level *b = current_binding_level;
+    while (b->level_chain->kind != sk_function_parms)
+      b = b->level_chain;
+    pushdecl_with_scope (byref_decl, b, /*is_friend=*/false);
+  }
+  /* LLVM LOCAL end 7387470 */
   mark_used (byref_decl);
   /* APPLE LOCAL begin radar 6083129 -  byref escapes (cp) */
   /* FIXME: finish this off, ensure the decl is scoped appropriately
@@ -21839,6 +21900,10 @@ static GTY (())  tree descriptor_ptr_type_with_copydispose;
  // optional helper functions
  void *CopyFuncPtr; // When BLOCK_HAS_COPY_DISPOSE is set (withCopyDispose true)
  void *DestroyFuncPtr; // When BLOCK_HAS_COPY_DISPOSE is set (withCopyDispose true)
+ // APPLE LOCAL begin radar 8143947
+ const char *signature;   // the block signature
+ const char *layout;      // reserved
+ // APPLE LOCAL end radar 8143947
 } *descriptor_ptr_type;
 
 Objects of this type will always be static. This is one main component of abi change.
@@ -21878,6 +21943,17 @@ build_block_descriptor_type (bool withCopyDispose)
     TREE_CHAIN (field_decl) = field_decl_chain;
     field_decl_chain = field_decl;
   }
+
+  /* APPLE LOCAL begin radar 8143947 */
+  /* char * signature */
+  field_decl = build_decl (FIELD_DECL, get_identifier ("signature"), build_pointer_type (char_type_node));
+  TREE_CHAIN (field_decl) = field_decl_chain;
+  field_decl_chain = field_decl;
+  /* char * layout */
+  field_decl = build_decl (FIELD_DECL, get_identifier ("layout"), build_pointer_type (char_type_node));
+  TREE_CHAIN (field_decl) = field_decl_chain;
+  field_decl_chain = field_decl;
+  /* APPLE LOCAL end radar 8143947 */
 
    /* Mark this struct as being a block struct rather than a 'normal'
       struct.  */
@@ -22011,7 +22087,7 @@ declare_block_prologue_local_vars (tree self_parm, tree component,
  */
 static void
 declare_block_prologue_local_byref_vars (tree self_parm, tree component,
-				   tree stmt)
+					 tree stmt)
 {
   tree decl, block_component;
   tree_stmt_iterator i;

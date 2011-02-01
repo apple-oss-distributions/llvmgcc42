@@ -21,6 +21,9 @@ along with GCC; see the file COPYING.  If not, write to the Free
 Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 02111-1307, USA.  */
 
+#ifndef LLVM_I386_TARGET_H
+#define LLVM_I386_TARGET_H
+
 /* LLVM specific stuff for supporting calling convention output */
 #define TARGET_ADJUST_LLVM_CC(CC, type)                         \
   {                                                             \
@@ -89,9 +92,9 @@ extern int ix86_regparm;
     }                                                           \
   }
 
-#define LLVM_SET_ARCH_OPTIONS(argvec)                           \
-  if (TARGET_NO_RED_ZONE)                                       \
-    argvec.push_back("--disable-red-zone");
+#define LLVM_SET_RED_ZONE_FLAG(disable_red_zone)                \
+  if (TARGET_64BIT && TARGET_NO_RED_ZONE)                       \
+    disable_red_zone = 1;
 
 #ifdef LLVM_ABI_H
 
@@ -136,7 +139,7 @@ extern const Type *llvm_x86_aggr_type_for_struct_return(tree type);
 
 /* LLVM_AGGR_TYPE_FOR_STRUCT_RETURN - Return LLVM Type if X can be 
    returned as an aggregate, otherwise return NULL. */
-#define LLVM_AGGR_TYPE_FOR_STRUCT_RETURN(X) \
+#define LLVM_AGGR_TYPE_FOR_STRUCT_RETURN(X, CC) \
   llvm_x86_aggr_type_for_struct_return(X)
 
 extern void llvm_x86_extract_multiple_return_value(Value *Src, Value *Dest,
@@ -209,7 +212,7 @@ extern bool
 llvm_x86_32_should_pass_aggregate_in_mixed_regs(tree, const Type *Ty,
                                                 std::vector<const Type*>&);
 
-#define LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(T, TY, E)           \
+#define LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(T, TY, CC, E)       \
   (TARGET_64BIT ?                                                    \
    llvm_x86_64_should_pass_aggregate_in_mixed_regs((T), (TY), (E)) : \
    llvm_x86_32_should_pass_aggregate_in_mixed_regs((T), (TY), (E)))
@@ -219,30 +222,13 @@ bool llvm_x86_64_aggregate_partially_passed_in_regs(std::vector<const Type*>&,
                                                     std::vector<const Type*>&,
                                                     bool);
 
-#define LLVM_AGGREGATE_PARTIALLY_PASSED_IN_REGS(E, SE, ISR)           \
+#define LLVM_AGGREGATE_PARTIALLY_PASSED_IN_REGS(E, SE, ISR, CC)       \
   (TARGET_64BIT ?                                                     \
    llvm_x86_64_aggregate_partially_passed_in_regs((E), (SE), (ISR)) : \
    false)
 
-/* llvm_store_scalar_argument - Store scalar argument ARGVAL of type
-   LLVMTY at location LOC.  */
-extern void llvm_x86_store_scalar_argument(Value *Loc, Value *ArgVal,
-                                           const llvm::Type *LLVMTy,
-                                           unsigned RealSize,
-                                           LLVMBuilder &Builder);
-#define LLVM_STORE_SCALAR_ARGUMENT(LOC,ARG,TYPE,SIZE,BUILDER)   \
-  llvm_x86_store_scalar_argument((LOC),(ARG),(TYPE),(SIZE),(BUILDER))
-
-
-/* llvm_load_scalar_argument - Load value located at LOC. */
-extern Value *llvm_x86_load_scalar_argument(Value *L,
-                                            const llvm::Type *LLVMTy,
-                                            unsigned RealSize,
-                                            LLVMBuilder &Builder);
-#define LLVM_LOAD_SCALAR_ARGUMENT(LOC,TY,SIZE,BUILDER) \
-  llvm_x86_load_scalar_argument((LOC),(TY),(SIZE),(BUILDER))
-
 #endif /* LLVM_ABI_H */
 #endif /* ENABLE_LLVM */
-/* LLVM LOCAL end (ENTIRE FILE!)  */
 
+#endif /* LLVM_I386_TARGET_H */
+/* LLVM LOCAL end (ENTIRE FILE!)  */

@@ -47,24 +47,19 @@ PREFIX = /usr
 #######################################################################
 
 # LLVM LOCAL begin
-# LLVM defaults to enabled.
-ifndef DISABLE_LLVM
-ENABLE_LLVM = true
 # LLVM gets installed into /Developer/usr/local, not /usr.
 ifndef DEVELOPER_DIR
 PREFIX = /Developer/usr/llvm-gcc-4.2
 else
 PREFIX = ${DEVELOPER_DIR}/usr/llvm-gcc-4.2
 endif
-else
-ENABLE_LLVM = false
-endif
+
+# Default to not reinstall libLTO.dylib.
+INSTALL_LIBLTO := no
 
 # Unless assertions are forced on in the GMAKE command line, disable them.
-ifdef ENABLE_ASSERTIONS
-LLVM_ASSERTIONS := yes
-else
-LLVM_ASSERTIONS := no
+ifndef ENABLE_ASSERTIONS
+ENABLE_ASSERTIONS := no
 endif
 
 ifndef LLVMCORE_PATH
@@ -75,6 +70,13 @@ LLVMCORE_PATH = ${DEVELOPER_DIR}/usr/local
 endif
 endif
 
+# Default is optimized build.
+ifeq ($(LLVM_DEBUG),1)
+LLVM_OPTIMIZED := no
+else
+LLVM_OPTIMIZED := yes
+endif
+
 ifndef RC_ProjectSourceVersion
 RC_ProjectSourceVersion = 9999
 endif
@@ -83,11 +85,30 @@ ifndef RC_ProjectSourceSubversion
 RC_ProjectSourceSubversion = 00
 endif
 
-install: $(OBJROOT) $(SYMROOT) $(DSTROOT)
+install:
+	$(MAKE) OBJROOT=$(OBJROOT)/obj-llvmCore \
+	        SYMROOT=$(OBJROOT)/sym-llvmCore \
+	        DSTROOT=$(OBJROOT)/dst-llvmCore llvmCore
+	$(MAKE) LLVMCORE_PATH=$(OBJROOT)/dst-llvmCore/Developer/usr/local \
+	        INSTALL_LIBLTO=no llvmgcc42
+
+llvmCore: $(OBJROOT) $(SYMROOT) $(DSTROOT)
+	if [ ! -d $(SRC)/llvmCore ]; then \
+	  echo "Error: llvmCore source directory is missing"; \
+	  exit 1; \
+	fi
+	cd $(OBJROOT) && \
+	  DEVELOPER_DIR=Developer \
+	  $(SRC)/llvmCore/utils/buildit/build_llvm "$(RC_ARCHS)" "$(TARGETS)" \
+	    $(SRC)/llvmCore /usr/local $(DSTROOT) $(SYMROOT) \
+	    $(ENABLE_ASSERTIONS) $(LLVM_OPTIMIZED) $(INSTALL_LIBLTO) \
+	    $(RC_ProjectSourceVersion) $(RC_ProjectSourceSubversion) 
+
+llvmgcc42: $(OBJROOT) $(SYMROOT) $(DSTROOT)
 	cd $(OBJROOT) && \
 	  $(SRC)/build_gcc "$(RC_ARCHS)" "$(TARGETS)" \
-	    $(SRC) $(PREFIX) $(DSTROOT) $(SYMROOT) $(ENABLE_LLVM) \
-	    $(LLVM_ASSERTIONS) $(LLVMCORE_PATH) \
+	    $(SRC) $(PREFIX) $(DSTROOT) $(SYMROOT) $(INSTALL_LIBLTO) \
+	    $(ENABLE_ASSERTIONS) $(LLVMCORE_PATH) \
 	    $(RC_ProjectSourceVersion) $(RC_ProjectSourceSubversion) 
 
 # LLVM LOCAL end
@@ -110,10 +131,11 @@ installsrc:
 	fi
 	# LLVM LOCAL begin: Avoid verification error due to binaries in libjava.
 	rm -rf "$(SRCROOT)/libjava/"
-	find -d "$(SRCROOT)" \( -type d -a -name CVS -o \
+	find -d "$(SRCROOT)" \( -type d -a -name .svn -o \
 	                        -type f -a -name .DS_Store -o \
 				-name \*~ -o -name .\#\* \) \
 	  -exec rm -rf {} \;
+	rm -rf "$(SRCROOT)/llvmCore/test"
 
 #######################################################################
 
@@ -141,4 +163,4 @@ clean:
 $(OBJROOT) $(SYMROOT) $(DSTROOT):
 	mkdir -p $@
 
-.PHONY: install installsrc clean
+.PHONY: install installsrc clean llvmCore llvmgcc42

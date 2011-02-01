@@ -128,6 +128,7 @@ struct arch_config_guess_map arch_config_map [] =
   {"armv5", "arm"},
   {"xscale", "arm"},
   {"armv6", "arm"},
+  {"armv7", "arm"},
   {NULL, NULL}
 };
 
@@ -781,6 +782,8 @@ add_arch_options (int index, const char **current_argv, int arch_index)
     current_argv[arch_index] = "-march=xscale";
   else if (!strcmp (arches[index], "armv6"))
     current_argv[arch_index] = "-march=armv6k";
+  else if (!strcmp (arches[index], "armv7"))
+    current_argv[arch_index] = "-march=armv7a";
   else
     count = 0;
 
@@ -1593,9 +1596,10 @@ main (int argc, const char **argv)
       if (num_infiles > 1 && !compile_only_request)
 	ima_is_used = 1;
 
-      /* Linker wants to know this in case of multiple -arch.  */
-      if (!compile_only_request && !dash_dynamiclib_seen)
-	new_argv[new_argc++] = "-Wl,-arch_multiple";
+      /* The compiler and linker both want to know if we have multiple archs.
+         The compiler for debug info emission and the linker for augmenting
+         error and warning messages.  */
+	    new_argv[new_argc++] = "-arch_multiple";
 
 
       /* If only one input file is specified OR IMA is used then expected output

@@ -2124,17 +2124,30 @@ build_array_ref (tree array, tree index)
        * and it provides it with more information for optimization.
        */
       {
-        tree ty = TREE_TYPE(TREE_TYPE(ar));
+        /* LLVM LOCAL begin 8361341 */
+        tree orig_ty = TREE_TYPE(TREE_TYPE(ar));
+        tree ty = orig_ty;
+        /* LLVM LOCAL end 8361341 */
         if (TREE_CODE(ty) == RECORD_TYPE || TREE_CODE(ty) == UNION_TYPE
             || TREE_CODE(ty) == QUAL_UNION_TYPE)
           ty = TYPE_MAIN_VARIANT (ty);
 
+        if (TYPE_SIZE_UNIT (ty) == 0) {
+          /* We don't know the size of the array elements, so we can't
+             index it.  Invoke the usual GCC routine; it will diagnose
+             the error and return a tree that won't ICE.  */
+          return build_indirect_ref (build_binary_op (PLUS_EXPR, ar, index, 0),
+                                     "array indexing");
+        }
+
         ar = build4 (ARRAY_REF, ty, ar, index, NULL_TREE, NULL_TREE);
-        /* Mirror logic from build_indirect_ref to set TREE_THIS_VOLATILE and other
-         * flags.
+        /* Mirror logic from build_indirect_ref to set TREE_THIS_VOLATILE and
+         * other flags.
          */
-        TREE_READONLY (ar) = TYPE_READONLY (TREE_TYPE (ar));
-        TREE_THIS_VOLATILE(ar) = TYPE_VOLATILE(TREE_TYPE (ar));
+        /* LLVM LOCAL begin 8361341 */
+        TREE_READONLY (ar) = TYPE_READONLY (orig_ty);
+        TREE_THIS_VOLATILE(ar) = TYPE_VOLATILE(orig_ty);
+        /* LLVM LOCAL end 8361341 */
         TREE_SIDE_EFFECTS (ar)
           = TREE_THIS_VOLATILE (ar) || TREE_SIDE_EFFECTS (array) ||
             TREE_SIDE_EFFECTS (index);
@@ -2146,6 +2159,7 @@ build_array_ref (tree array, tree index)
 				 "array indexing");
     }
 }
+
 
 /* Build an external reference to identifier ID.  FUN indicates
    whether this will be used for a function call.  LOC is the source
@@ -2209,9 +2223,14 @@ build_external_ref (tree id, int fun, location_t loc)
 	    {
 	      /* APPLE LOCAL begin radar 5803600 (C++ ci) */
 	      /* byref globals are directly accessed. */
-	      if (!gdecl)
+              /* APPLE LOCAL begin radar 7760213 */
+	      if (!gdecl) {
+                if (HasByrefArray(TREE_TYPE (decl)))
+       		  error ("cannot access __block variable of array type inside block");
 		/* build a decl for the byref variable. */
 		decl = build_block_byref_decl (id, decl, decl);
+              }
+              /* APPLE LOCAL end radar 7760213 */
 	      else
 		add_block_global_byref_list (decl);
 	    }
@@ -2219,10 +2238,15 @@ build_external_ref (tree id, int fun, location_t loc)
 	    {
 	      /* 'byref' globals are never copied-in. So, do not add
 		 them to the copied-in list. */
-	      if (!in_block_global_byref_list (decl))
+	      if (!in_block_global_byref_list (decl)) {
+		/* APPLE LOCAL begin radar 7721728 */
+                if (TREE_CODE (TREE_TYPE (decl)) == ARRAY_TYPE)
+       		  error ("cannot access copied-in variable of array type inside block");
+		/* APPLE LOCAL end radar 7721728 */
 		/* build a new decl node. set its type to 'const' type
 		   of the old decl. */
 		decl = build_block_ref_decl (id, decl);
+              }
 	      /* APPLE LOCAL end radar 5803600 (C++ ci) */
 	      /* APPLE LOCAL end radar 5803005 (C++ ci) */
 	    }
@@ -3331,7 +3355,12 @@ build_unary_op (enum tree_code code, tree xarg, int flag)
 
       /* LLVM LOCAL begin */
       /* LLVM wants &x[y] to be kept as an &x[y] for better optimization. */
-#ifndef ENABLE_LLVM
+      /* However we shouldn't do this in asm blocks; we aren't going to be
+         doing anything complicated with addresses, and the asm block code
+         only understands array refs. */
+#ifdef ENABLE_LLVM
+      if (inside_iasm_block) {
+#endif
       /* For &x[y], return x+y */
       if (TREE_CODE (arg) == ARRAY_REF)
 	{
@@ -3344,6 +3373,8 @@ build_unary_op (enum tree_code code, tree xarg, int flag)
 				   : op0),
 				  TREE_OPERAND (arg, 1), 1);
 	}
+#ifdef ENABLE_LLVM
+      }
 #endif 
       /* LLVM LOCAL end */
 
@@ -3379,7 +3410,8 @@ build_unary_op (enum tree_code code, tree xarg, int flag)
 	 when we have proper support for integer constant expressions.  */
       val = get_base_address (arg);
       if (val && TREE_CODE (val) == INDIRECT_REF
-          && TREE_CONSTANT (TREE_OPERAND (val, 0)))
+      /* LLVM LOCAL treat only constant deref as pseudo-offsetof 8629268 */
+          && TREE_CODE (TREE_OPERAND (val, 0)) == INTEGER_CST)
 	{
 	  tree op0 = fold_convert (argtype, fold_offsetof (arg, val)), op1;
 
@@ -4936,7 +4968,27 @@ store_init_value (tree decl, tree init)
     warning (OPT_Wtraditional, "traditional C rejects automatic "
 	     "aggregate initialization");
 
-  DECL_INITIAL (decl) = value;
+  /* LLVM LOCAL begin 8521187 */
+  {
+    bool was_error_mark = (DECL_INITIAL(decl) == error_mark_node);
+    extern void * TheTreeToLLVM;        /* llvm-internal.h is not available here.  Ugh.  */
+
+    DECL_INITIAL (decl) = value;
+
+    /*
+     * If we're updating the initialization of a variable or function decl,
+     * and we're inside a function body (not initializing a global or static),
+     * and the previous value was the placeholder 'error_mark_node',
+     * then tell LLVM we updated the initialization.
+     */
+    if ((TREE_CODE(decl) == VAR_DECL || TREE_CODE(decl) == FUNCTION_DECL)
+        && TREE_STATIC(decl) && was_error_mark && TheTreeToLLVM)
+      {
+        extern void reset_type_and_initializer_llvm(tree);
+        reset_type_and_initializer_llvm(decl);
+      }
+  }
+  /* LLVM LOCAL end 8521187 */
 
   /* ANSI wants warnings about out-of-range constant initializers.  */
   STRIP_TYPE_NOPS (value);
@@ -7764,6 +7816,10 @@ static tree
 c_finish_block_return_stmt (tree retval)
 {
   tree valtype;
+  /* APPLE LOCAL begin radar 7901648 */
+  if (retval == error_mark_node)
+    return error_mark_node;
+  /* APPLE LOCAL end radar 7901648 */
   /* If this is the first return we've seen in the block, infer the type of
      the block from it. */
   if (cur_block->return_type == NULL_TREE)

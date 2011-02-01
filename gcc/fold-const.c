@@ -5714,6 +5714,9 @@ extract_muldiv_1 (tree t, tree c, enum tree_code code, tree wide_type,
       if (TYPE_UNSIGNED (ctype) != TYPE_UNSIGNED (type))
 	break;
 
+      /* LLVM LOCAL 8198362 */
+      if (TYPE_UNSIGNED (ctype)) break;
+
       /* MIN (a, b) / 5 -> MIN (a / 5, b / 5)  */
       sub_strict_overflow_p = false;
       if ((t1 = extract_muldiv (op0, c, code, wide_type,
@@ -11280,10 +11283,24 @@ fold_binary (enum tree_code code, tree type, tree op0, tree op1)
 		if (code == LE_EXPR || code == GT_EXPR)
 		  {
 		    tree st;
+		    /* APPLE LOCAL begin 7105615 */
+		    tree ov_zero;
 		    st = lang_hooks.types.signed_type (TREE_TYPE (arg1));
+		    /*
+		     * We need a zero that is NOT part of the constant
+		     * pool, because we're going to set its
+		     * TREE_OVERFLOW bit.  If the returned
+		     * CONSTANT_INT is part of the constant pool, it
+		     * may be returned to another caller in another
+		     * context (i.e. tree-vrp.c), who may arbitrarily
+		     * *clear* this TREE_OVERFLOW bit.
+		     */
+		    ov_zero = copy_node (build_int_cst (st, 0));
+		    TREE_OVERFLOW (ov_zero) = 1;
 		    return fold_build2 (code == LE_EXPR ? GE_EXPR : LT_EXPR,
 					type, fold_convert (st, arg0),
-					build_int_cst (st, 0));
+					ov_zero);
+		    /* APPLE LOCAL end 7105615 */
 		  }
 	      }
 	  }

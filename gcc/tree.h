@@ -449,6 +449,10 @@ struct tree_common GTY(())
 	   OMP_SECTION
        OMP_PARALLEL_COMBINED in
 	   OMP_PARALLEL
+   LLVM LOCAL begin msasm bit on asm
+       ASM_ASM_BLOCK in
+           ASM_EXPR
+   LLVM LOCAL end
 
    protected_flag:
 
@@ -1548,6 +1552,8 @@ struct tree_constructor GTY(())
    ASM_OPERAND with no operands.  */
 #define ASM_INPUT_P(NODE) (TREE_STATIC (NODE))
 #define ASM_VOLATILE_P(NODE) (TREE_PUBLIC (NODE))
+/* LLVM LOCAL msasm bit in asm */
+#define ASM_ASM_BLOCK(NODE) (TREE_PRIVATE (NODE))
 
 /* COND_EXPR accessors.  */
 #define COND_EXPR_COND(NODE)	(TREE_OPERAND (COND_EXPR_CHECK (NODE), 0))
@@ -2617,6 +2623,8 @@ struct tree_decl_common GTY(())
      In VAR_DECL and PARM_DECL, this is DECL_REGISTER.  */
   unsigned decl_flag_0 : 1;
   /* In FIELD_DECL, this is DECL_PACKED.  */
+  /* LLVM LOCAL */
+  /* In VAR_DECL, this is DECL_ASM_BLOCK_REGISTER. */
   unsigned decl_flag_1 : 1;
   /* In FIELD_DECL, this is DECL_BIT_FIELD
      In VAR_DECL and FUNCTION_DECL, this is DECL_EXTERNAL.
@@ -2697,6 +2705,9 @@ extern void decl_value_expr_insert (tree, tree);
 /* In VAR_DECL and PARM_DECL nodes, nonzero means declared `register'.  */
 #define DECL_REGISTER(NODE) (DECL_WRTL_CHECK (NODE)->decl_common.decl_flag_0)
 
+/* In VAR_DECL, nonzero means a register used by asm block code. */
+#define DECL_ASM_BLOCK_REGISTER(NODE) (DECL_WRTL_CHECK (NODE)->decl_common.decl_flag_1)
+
 struct tree_decl_with_rtl GTY(())
 {
   struct tree_decl_common common;
@@ -2748,8 +2759,9 @@ struct tree_decl_with_rtl GTY(())
 
 /* LLVM LOCAL begin */
 #ifdef ENABLE_LLVM
-/* In a FIELD_DECL, marks that the type is temporarily replaced in ConvertType. */
-#define DECL_FIELD_REPLACED(NODE) (FIELD_DECL_CHECK (NODE)->decl_common.decl_flag_0)
+/* In a FIELD_DECL, marks that the type is temporarily replaced in ConvertType
+   because it is used as a base class of another type. */
+#define DECL_FIELD_BASE_REPLACED(NODE) (FIELD_DECL_CHECK (NODE)->decl_common.decl_flag_0)
 #endif
 /* LLVM LOCAL end */
 
@@ -2775,6 +2787,9 @@ struct tree_field_decl GTY(())
   tree bit_offset;
   tree fcontext;
 
+  /* LLVM LOCAL begin */
+  unsigned llvm_field_index;  /* Field index in llvm struct. */
+  /* LLVM LOCAL end */
 };
 
 /* A numeric unique identifier for a LABEL_DECL.  The UID allocation is
@@ -2857,6 +2872,9 @@ extern void *llvm_get_decl(tree);
 #define SET_DECL_LLVM_INDEX(NODE, INDEX)  \
   (DECL_WRTL_CHECK(NODE)->decl_with_rtl.llvm = INDEX)
 #define GET_DECL_LLVM_INDEX(NODE) (DECL_WRTL_CHECK(NODE)->decl_with_rtl.llvm)
+#define GET_LLVM_FIELD_INDEX(NODE) (FIELD_DECL_CHECK(NODE)->field_decl.llvm_field_index)
+#define SET_LLVM_FIELD_INDEX(NODE, INDEX)                               \
+  (FIELD_DECL_CHECK(NODE)->field_decl.llvm_field_index = INDEX)
 
 /* Returns nonzero if the DECL_LLVM for NODE has already been set.  */
 extern bool llvm_set_decl_p(tree);
@@ -2922,6 +2940,11 @@ struct tree_parm_decl GTY(())
 #ifdef ENABLE_LLVM
 #define DECL_LLVM_PRIVATE(NODE) \
   (DECL_WITH_VIS_CHECK (NODE)->decl_with_vis.llvm_private_flag)
+#define DECL_LLVM_LINKER_PRIVATE(NODE) \
+  (DECL_WITH_VIS_CHECK (NODE)->decl_with_vis.llvm_linker_private_flag)
+/* LLVM LOCAL - linker_private_weak <rdar://problem/7907014> */
+#define DECL_LLVM_LINKER_PRIVATE_WEAK(NODE) \
+  (DECL_WITH_VIS_CHECK (NODE)->decl_with_vis.llvm_linker_private_weak_flag)
 #endif
 /* LLVM LOCAL end */
 
@@ -3064,6 +3087,9 @@ struct tree_decl_with_vis GTY(())
 
  /* LLVM LOCAL begin */
  unsigned llvm_private_flag : 1;
+ unsigned llvm_linker_private_flag : 1;
+ /* LLVM LOCAL - linker_private_weak <rdar://problem/7907014> */
+ unsigned llvm_linker_private_weak_flag : 1;
  /* LLVM LOCAL end */
 
  ENUM_BITFIELD(symbol_visibility) visibility : 2;
@@ -3086,7 +3112,7 @@ struct tree_decl_with_vis GTY(())
  unsigned block_synthesized_function : 1;
  /* APPLE LOCAL radar 5847976 */
  unsigned block_weak : 1;
- /* 4 unused bits (llvm). */
+ /* 3 unused bits (llvm). */
  /* APPLE LOCAL end radar 5932809 - copyable byref blocks */
  /* APPLE LOCAL end radar 5732232 - blocks */
 };
@@ -3255,6 +3281,15 @@ struct tree_decl_non_common GTY(())
 #define DECL_DECLARED_INLINE_P(NODE) \
   (FUNCTION_DECL_CHECK (NODE)->function_decl.declared_inline_flag)
 
+/* LLVM LOCAL begin inlinehint attribute */
+/* Nonzero in a FUNCTION_DECL means that this function was explicitly declared
+   inline via the `inline' keyword.  This flag controls the inlinehint attribute
+   passed to the LLVM optimizer.  */
+#define DECL_EXPLICIT_INLINE_P(NODE) \
+  (FUNCTION_DECL_CHECK (NODE)->function_decl.explicit_inline_flag)
+/* LLVM LOCAL end inlinehint attribute */
+
+
 /* For FUNCTION_DECL, this holds a pointer to a structure ("struct function")
    that describes the status of this function.  */
 #define DECL_STRUCT_FUNCTION(NODE) (FUNCTION_DECL_CHECK (NODE)->function_decl.f)
@@ -3302,6 +3337,9 @@ struct tree_function_decl GTY(())
   unsigned no_instrument_function_entry_exit : 1;
   unsigned no_limit_stack : 1;
   ENUM_BITFIELD(built_in_class) built_in_class : 2;
+  /* LLVM LOCAL begin inlinehint attribute */
+  unsigned explicit_inline_flag : 1;
+  /* LLVM LOCAL end inlinehint attribute */
 
   /* APPLE LOCAL DECL_ESTIMATED_INSNS */
   HOST_WIDE_INT estimated_insns;
@@ -4405,6 +4443,8 @@ extern bool empty_body_p (tree);
 /* LLVM LOCAL begin */
 #ifdef ENABLE_LLVM
 extern void llvm_note_type_used(tree);
+extern void llvm_push_TypeUsers(tree);
+extern tree llvm_pop_TypeUsers(void);
 #endif
 /* LLVM LOCAL begin */
 
@@ -4883,5 +4923,9 @@ extern void note_alternative_entry_points (void);
 extern GTY(()) tree generic_block_literal_struct_type;
 
 /* APPLE LOCAL end radar 6300081  */
+
+/* LLVM LOCAL begin radar 6419781 */
+extern bool type_is_block_byref_struct (tree);
+/* LLVM LOCAL end radar 6419781 */
 
 #endif  /* GCC_TREE_H  */

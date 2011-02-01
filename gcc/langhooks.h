@@ -410,6 +410,11 @@ struct lang_hooks
      semantics in cases that it doesn't want to handle specially.  */
   tree (*expr_size) (tree);
 
+/* LLVM LOCAL begin 7659636 */
+  /* Return true (non-zero) if the given RECORD_TYPE has size zero.  */
+  int (*empty_type_p) (tree);
+/* LLVM LOCAL end 7659636 */
+
   /* Convert a character from the host's to the target's character
      set.  The character should be in what C calls the "basic source
      character set" (roughly, the set of characters defined by plain
@@ -474,12 +479,21 @@ struct lang_hooks
      TREE_SIDE_EFFECTS need updating.  */
   tree (*expr_to_decl) (tree expr, bool *tc, bool *ti, bool *se);
 
-
   /* APPLE LOCAL begin radar 6353006  */
   /*  For c-based languages, builds a generic type for Blocks pointers (for
       emitting debug information.  For other languages, returns NULL.  */
   tree (*build_generic_block_struct_type) (void);
   /* APPLE LOCAL end radar 6353006  */
+
+  /* LLVM LOCAL begin <rdar://problem/7929157> */
+  /* Returns true if the function decl is a thunk.  */
+  bool (*function_is_thunk_p) (tree fndecl);
+  /* LLVM LOCAL end <rdar://problem/7929157> */
+
+  /* LLVM LOCAL begin <rdar://problem/8104369> */
+  /* Returns the target of a thunk.  */
+  tree (*thunk_target) (tree thunk);
+  /* LLVM LOCAL end <rdar://problem/8104369> */
 
   /* Whenever you add entries here, make sure you adjust langhooks-def.h
      and langhooks.c accordingly.  */

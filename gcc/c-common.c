@@ -286,6 +286,10 @@ int flag_no_asm;
 int flag_iasm_blocks;
 /* APPLE LOCAL end CW asm blocks */
 
+/* LLVM LOCAL begin CW asm blocks */
+int iasm_label_counter;
+/* LLVM LOCAL end CW asm blocks */
+
 /* Nonzero means to treat bitfields as signed unless they say `unsigned'.  */
 
 int flag_signed_bitfields = 1;
@@ -299,7 +303,6 @@ int warn_unknown_pragmas; /* Tri state variable.  */
 
 /* APPLE LOCAL begin default to Wformat-security 5764921 */
 /* LLVM LOCAL begin initialize via config/darwin.h */
-#ifdef ENABLE_LLVM
 #ifndef WARN_FORMAT_INIT
 #define WARN_FORMAT_INIT 0
 #endif
@@ -308,9 +311,6 @@ int warn_unknown_pragmas; /* Tri state variable.  */
 #endif
 int warn_format = WARN_FORMAT_INIT;
 int warn_format_security = WARN_FORMAT_SECURITY_INIT;
-#else
-int warn_format = 1;
-#endif
 /* LLVM LOCAL end initialize via config/darwin.h */
 /* APPLE LOCAL end default to Wformat-security 5764921 */
 
@@ -2602,31 +2602,34 @@ pointer_int_sum (enum tree_code resultcode, tree ptrop, tree intop)
 #ifdef ENABLE_LLVM
     }
 
-  /* In LLVM we want to represent this as &P[i], not as P+i*sizeof(*P). */
-  /* Convert the pointer to char* if it is a pointer to a zero sized object. */
-  if (!size_set)
-    ptrop = convert(build_pointer_type(char_type_node), ptrop);
-  
-  /* If the code is a subtract, construct 0-(ptrdiff_t)val. */
-  if (resultcode == MINUS_EXPR)
-    intop = build_binary_op (MINUS_EXPR,
-                             convert (ssizetype, integer_zero_node),
-                             convert (ssizetype, intop), 1);
-  {
-    tree arrayref, result, folded;
-    arrayref = build4 (ARRAY_REF, TREE_TYPE(TREE_TYPE(ptrop)), ptrop, intop,
-                       NULL_TREE, NULL_TREE);
-    result = build_unary_op (ADDR_EXPR, arrayref, 0);
-  
-    folded = fold (result);
-    if (folded == result)
-      TREE_CONSTANT (folded) = TREE_CONSTANT (ptrop) & TREE_CONSTANT (intop);
-    
-    /* If the original was void* + int, we converted it to char* + int.  Convert
-       back to the appropriate void* result and match type qualifiers. */
-    if (!size_set || TYPE_QUALS(result_type) != TYPE_QUALS(TREE_TYPE(folded)))
-      folded = convert(result_type, folded);
-    return folded;
+  if (!inside_iasm_block) {
+    /* In LLVM we want to represent this as &P[i], not as P+i*sizeof(*P). */
+    /* Convert the pointer to char* if it is a pointer to a zero sized object.*/
+    if (!size_set)
+      ptrop = convert(build_pointer_type(char_type_node), ptrop);
+
+    /* If the code is a subtract, construct 0-(ptrdiff_t)val. */
+    if (resultcode == MINUS_EXPR)
+      intop = build_binary_op (MINUS_EXPR,
+                               convert (ssizetype, integer_zero_node),
+                               convert (ssizetype, intop), 1);
+    {
+      tree arrayref, result, folded;
+      arrayref = build4 (ARRAY_REF, TREE_TYPE(TREE_TYPE(ptrop)), ptrop, intop,
+                         NULL_TREE, NULL_TREE);
+      result = build_unary_op (ADDR_EXPR, arrayref, 0);
+
+      folded = fold (result);
+      if (folded == result)
+        TREE_CONSTANT (folded) = TREE_CONSTANT (ptrop) & TREE_CONSTANT (intop);
+
+      /* If the original was void* + int, we converted it to char* + int.
+         Convert back to the appropriate void* result and match type 
+         qualifiers. */
+      if (!size_set || TYPE_QUALS(result_type) != TYPE_QUALS(TREE_TYPE(folded)))
+        folded = convert(result_type, folded);
+      return folded;
+    }
   }
 #endif
   /* LLVM LOCAL end */
@@ -4739,9 +4742,12 @@ handle_const_attribute (tree *node, tree name, tree ARG_UNUSED (args),
   tree type = TREE_TYPE (*node);
 
   /* See FIXME comment on noreturn in c_common_attribute_table.  */
-  if (TREE_CODE (*node) == FUNCTION_DECL)
+  /* LLVM LOCAL begin */
+  if (TREE_CODE (*node) == FUNCTION_DECL) {
     TREE_READONLY (*node) = 1;
-  else if (TREE_CODE (type) == POINTER_TYPE
+    TREE_NOTHROW (*node) = 1;
+  } else if (TREE_CODE (type) == POINTER_TYPE
+  /* LLVM LOCAL end */
 	   && TREE_CODE (TREE_TYPE (type)) == FUNCTION_TYPE)
     TREE_TYPE (*node)
       = build_pointer_type
@@ -5573,10 +5579,13 @@ static tree
 handle_pure_attribute (tree *node, tree name, tree ARG_UNUSED (args),
 		       int ARG_UNUSED (flags), bool *no_add_attrs)
 {
-  if (TREE_CODE (*node) == FUNCTION_DECL)
+  /* LLVM LOCAL begin */
+  if (TREE_CODE (*node) == FUNCTION_DECL) {
     DECL_IS_PURE (*node) = 1;
-  /* ??? TODO: Support types.  */
-  else
+    TREE_NOTHROW (*node) = 1;
+  } else
+  /* LLVM LOCAL end */
+    /* ??? TODO: Support types.  */
     {
       warning (OPT_Wattributes, "%qE attribute ignored", name);
       *no_add_attrs = true;
@@ -7950,6 +7959,8 @@ iasm_stmt (tree expr, tree args, int lineno)
       stmt = build_stmt (ASM_EXPR, sexpr, NULL_TREE, NULL_TREE, clobbers, NULL_TREE);
       clobbers = NULL_TREE;
       ASM_VOLATILE_P (stmt) = 1;
+      /* LLVM LOCAL */
+      ASM_ASM_BLOCK (stmt) = 1;
       (void)add_stmt (stmt);
     }
 #endif
@@ -7959,6 +7970,8 @@ iasm_stmt (tree expr, tree args, int lineno)
   sexpr = build_string (strlen (iasm_buffer), iasm_buffer);
   stmt = build_stmt (ASM_EXPR, sexpr, NULL_TREE, NULL_TREE, NULL_TREE, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
+  /* LLVM LOCAL */
+  ASM_ASM_BLOCK (stmt) = 1;
   (void)add_stmt (stmt);
 
   /* Build .line "line-number" directive. */
@@ -7966,6 +7979,8 @@ iasm_stmt (tree expr, tree args, int lineno)
   sexpr = build_string (strlen (iasm_buffer), iasm_buffer);
   stmt = build_stmt (ASM_EXPR, sexpr, NULL_TREE, NULL_TREE, NULL_TREE, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
+  /* LLVM LOCAL */
+  ASM_ASM_BLOCK (stmt) = 1;
   (void)add_stmt (stmt);
 
   iasm_buffer[0] = '\0';
@@ -7988,6 +8003,12 @@ iasm_stmt (tree expr, tree args, int lineno)
 	{
 	  if (TARGET_64BIT)
 	    e.modifier = "l";
+          /* LLVM LOCAL begin apply this only within calls */
+#ifdef ENABLE_LLVM
+          else
+            e.modifier = "P";
+#endif
+          /* LLVM LOCAL end */
 	  iasm_force_constraint ("X", &e);
 	}
     }
@@ -8069,6 +8090,8 @@ iasm_stmt (tree expr, tree args, int lineno)
   sexpr = build_string (strlen (iasm_buffer), iasm_buffer);
 
   clobbers = uses;
+  /* LLVM LOCAL uses have been moved into clobbers. */
+  uses = NULL_TREE;
 #ifdef TARGET_MACHO
   if (iasm_memory_clobber (opcodename))
     {
@@ -8111,6 +8134,8 @@ iasm_stmt (tree expr, tree args, int lineno)
   /* Treat as volatile always.  */
   stmt = build_stmt (ASM_EXPR, sexpr, outputs, inputs, clobbers, uses);
   ASM_VOLATILE_P (stmt) = 1;
+  /* LLVM LOCAL */
+  ASM_ASM_BLOCK (stmt) = 1;
   add_stmt (stmt);
   input_location.line = saved_lineno;
   return;
@@ -8305,6 +8330,20 @@ iasm_print_operand (char *buf, tree arg, unsigned argnum,
 	  sprintf (buf + strlen (buf), "%s", name);
 	  break;
 	}
+/* LLVM LOCAL begin */
+#ifdef ENABLE_LLVM
+      /* Labels defined earlier in the asm block will have DECL_INITIAL set
+         at this point; labels we haven't seen yet won't.  LABEL_DECL_UID
+         should be set in either case (when we saw the forward ref, we
+         assumed the target was inside the block; that's what gcc does). */
+      if (DECL_INITIAL (arg))
+        sprintf(buf + strlen(buf), HOST_WIDE_INT_PRINT_DEC "b",
+                LABEL_DECL_UID (arg));
+      else
+        sprintf(buf + strlen(buf), HOST_WIDE_INT_PRINT_DEC "f",
+                LABEL_DECL_UID (arg));
+#else
+/* LLVM LOCAL end */
       TREE_USED (arg) = 1;
       IASM_OFFSET_PREFIX (e, buf);
       arg = build1 (ADDR_EXPR, ptr_type_node, arg);
@@ -8330,6 +8369,8 @@ iasm_print_operand (char *buf, tree arg, unsigned argnum,
 #endif
       iasm_get_register_var (arg, modifier, buf, argnum, must_be_reg, e);
       iasm_force_constraint (0, e);
+/* LLVM LOCAL */
+#endif  /* ENABLE_LLVM */
       break;
 
     case IDENTIFIER_NODE:
@@ -8463,6 +8504,16 @@ iasm_print_operand (char *buf, tree arg, unsigned argnum,
 	      e->modifier = 0;
 	      strcat (buf, "*");
 	    }
+/* LLVM LOCAL begin apply P modifier only within calls. */
+#ifdef ENABLE_LLVM
+          else 
+            {
+              modifier = "";
+              if (e->modifier && strcmp (e->modifier, "P") == 0)
+                modifier = "P";
+            }
+#endif
+/* LLVM LOCAL end */
 #endif
       iasm_get_register_var (arg, modifier, buf, argnum, must_be_reg, e);
       break;
@@ -8628,16 +8679,15 @@ iasm_reg_name (tree id)
 tree
 iasm_label (tree labid, bool atsign)
 {
-/* LLVM LOCAL begin */
-/* Unused variables resulting from code change below. */
-#ifdef ENABLE_LLVM
-  tree stmt, label;
-#else
   tree sexpr;
   tree inputs = NULL_TREE, outputs = NULL_TREE, clobbers = NULL_TREE;
   tree stmt;
+/* LLVM LOCAL begin */
+#ifndef ENABLE_LLVM
   tree label, l;
   tree str, one;
+#else
+  tree label;
 #endif
 /* LLVM LOCAL end */
   STRIP_NOPS (labid);
@@ -8650,8 +8700,7 @@ iasm_label (tree labid, bool atsign)
 
   iasm_buffer[0] = '\0';
   label = iasm_define_label (labid);
-/* LLVM LOCAL */
-#ifdef ENABLE_LLVM
+#if 0
   /* Ideally I'd like to do this, but, it moves the label in:
 
 	nop
@@ -8676,6 +8725,8 @@ iasm_label (tree labid, bool atsign)
 #else
   /* Arrange for the label to be a parameter to the ASM_EXPR, as only then will the
      backend `manage it' for us, say, making a unique copy for inline expansion.  */
+/* LLVM LOCAL */
+#ifndef ENABLE_LLVM
   sprintf (iasm_buffer, "%%l0: # %s", IDENTIFIER_POINTER (DECL_NAME (label)));
 
   l = build1 (ADDR_EXPR, ptr_type_node, label);
@@ -8687,9 +8738,18 @@ iasm_label (tree labid, bool atsign)
   inputs = chainon (NULL_TREE, one);
   sexpr = build_string (strlen (iasm_buffer), iasm_buffer);
   
+/* LLVM LOCAL begin */
+#else
+  sprintf (iasm_buffer, HOST_WIDE_INT_PRINT_DEC ": # %s",
+           LABEL_DECL_UID (label), IDENTIFIER_POINTER (DECL_NAME (label)));
+  sexpr = build_string (strlen (iasm_buffer), iasm_buffer);
+#endif
+/* LLVM LOCAL end */
   /* Simple asm statements are treated as volatile.  */
   stmt = build_stmt (ASM_EXPR, sexpr, outputs, inputs, clobbers, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
+  /* LLVM LOCAL */
+  ASM_ASM_BLOCK (stmt) = 1;
   stmt = add_stmt (stmt);
 #endif
   return stmt;
@@ -8826,6 +8886,10 @@ iasm_lookup_label (tree labid)
   strcat (buf, labname);
   newid = get_identifier (buf);
   newid = lookup_label (newid);
+/* LLVM LOCAL begin */  
+  if (LABEL_DECL_UID (newid) == -1)
+    LABEL_DECL_UID (newid) = iasm_label_counter++;
+/* LLVM LOCAL end */
   return newid;
 }
 
@@ -8853,6 +8917,10 @@ iasm_define_label (tree labid)
   strcat (buf, labname);
   newid = get_identifier (buf);
   newid = define_label (input_location, newid);
+  /* LLVM LOCAL begin */
+  if (LABEL_DECL_UID (newid) == -1)
+    LABEL_DECL_UID (newid) = iasm_label_counter++;
+  /* LLVM LOCAL end */
   return newid;
 }
 
@@ -8909,6 +8977,8 @@ iasm_entry (int scspec, tree fn)
       /* Treat as volatile always.  */
       stmt = build_stmt (ASM_EXPR, strlab, NULL_TREE, inputs, NULL_TREE, NULL_TREE);
       ASM_VOLATILE_P (stmt) = 1;
+      /* LLVM LOCAL */
+      ASM_ASM_BLOCK (stmt) = 1;
       add_stmt (stmt);
     }
 
@@ -8916,6 +8986,8 @@ iasm_entry (int scspec, tree fn)
   /* Treat as volatile always.  */
   stmt = build_stmt (ASM_EXPR, strlab, NULL_TREE, inputs, NULL_TREE, NULL_TREE);
   ASM_VOLATILE_P (stmt) = 1;
+  /* LLVM LOCAL */
+  ASM_ASM_BLOCK (stmt) = 1;
   add_stmt (stmt);
 }
 /* APPLE LOCAL end CW asm blocks */
@@ -9285,4 +9357,20 @@ tree build_block_object_dispose_call_exp (tree src, int flag)
   return build_function_call (build_block_object_dispose_decl (), func_params);
 }
 /* APPLE LOCAL end radar 5847976 */
+/* APPLE LOCAL begin radar 7760213 */
+int HasByrefArray(tree byrefType)
+{
+  tree s1;
+  /* Check for possibility of an error condition. */
+  if (TREE_CODE(byrefType) != RECORD_TYPE)
+    return 0;
+
+  for (s1 = TYPE_FIELDS (byrefType); s1; s1 = TREE_CHAIN (s1))
+    {
+      if (TREE_CODE(TREE_TYPE(s1)) == ARRAY_TYPE)
+        return 1;
+    }
+  return 0;
+}
+/* APPLE LOCAL end radar 7760213 */
 #include "gt-c-common.h"

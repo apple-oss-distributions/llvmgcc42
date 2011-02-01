@@ -36,7 +36,23 @@
 #endif
 /* LLVM LOCAL end */
 #endif
+
+/* LLVM LOCAL begin */
+#ifdef ENABLE_LLVM
+/* Add general target specific stuff */
+#include "llvm-arm-target.h"
+
+#endif /* ENABLE_LLVM */
+/* LLVM LOCAL end */
+
 /* APPLE LOCAL end ARM darwin target */
+
+/* APPLE LOCAL begin 6150882 use thumb2 by default for v7 */
+/* thumb_option is initialized to -1, so we can tell whether the user
+   explicitly passed -mthumb or -mno-thumb. override_options will
+   set thumb_option = 1 if -mno-thumb was not seen. */
+#define TARGET_THUMB (thumb_option == 1)
+/* APPLE LOCAL end 6150882 use thumb2 by default for v7 */
 
 /* APPLE LOCAL ARM interworking */
 #define TARGET_INTERWORK (interwork_option == 1)
@@ -54,6 +70,10 @@ extern char arm_arch_name[];
 	builtin_define ("__APCS_32__");			\
 	if (TARGET_THUMB)				\
 	  builtin_define ("__thumb__");			\
+/* APPLE LOCAL begin v7 support. Merge from mainline */ \
+	if (TARGET_THUMB2)				\
+	  builtin_define ("__thumb2__");		\
+/* APPLE LOCAL end v7 support. Merge from mainline */   \
 							\
 	if (TARGET_BIG_END)				\
 	  {						\
@@ -76,6 +96,10 @@ extern char arm_arch_name[];
 	if (TARGET_VFP)					\
 	  builtin_define ("__VFP_FP__");		\
 							\
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */ \
+	if (TARGET_NEON)				\
+	  builtin_define ("__ARM_NEON__");		\
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */   \
 	/* Add a define for interworking.		\
 	   Needed when building libgcc.a.  */		\
 	if (arm_cpp_interwork)				\
@@ -195,9 +219,11 @@ extern GTY(()) rtx aof_pic_label;
 #define TARGET_FPA			(arm_fp_model == ARM_FP_MODEL_FPA)
 #define TARGET_MAVERICK			(arm_fp_model == ARM_FP_MODEL_MAVERICK)
 #define TARGET_VFP			(arm_fp_model == ARM_FP_MODEL_VFP)
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 #define TARGET_IWMMXT			(arm_arch_iwmmxt)
-#define TARGET_REALLY_IWMMXT		(TARGET_IWMMXT && TARGET_ARM)
-#define TARGET_IWMMXT_ABI (TARGET_ARM && arm_abi == ARM_ABI_IWMMXT)
+#define TARGET_REALLY_IWMMXT		(TARGET_IWMMXT && TARGET_32BIT)
+#define TARGET_IWMMXT_ABI (TARGET_32BIT && arm_abi == ARM_ABI_IWMMXT)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 #define TARGET_ARM                      (! TARGET_THUMB)
 #define TARGET_EITHER			1 /* (TARGET_ARM | TARGET_THUMB) */
 #define TARGET_BACKTRACE	        (leaf_function_p () \
@@ -207,14 +233,69 @@ extern GTY(()) rtx aof_pic_label;
 #define TARGET_AAPCS_BASED \
     (arm_abi != ARM_ABI_APCS && arm_abi != ARM_ABI_ATPCS)
 
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+/* True if we should avoid generating conditional execution instructions.  */
+#define TARGET_NO_COND_EXEC		(arm_tune_marvell_f && !optimize_size)
+
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 #define TARGET_HARD_TP			(target_thread_pointer == TP_CP15)
 #define TARGET_SOFT_TP			(target_thread_pointer == TP_SOFT)
+
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* Only 16-bit thumb code.  */
+#define TARGET_THUMB1			(TARGET_THUMB && !arm_arch_thumb2)
+/* Arm or Thumb-2 32-bit code.  */
+#define TARGET_32BIT			(TARGET_ARM || arm_arch_thumb2)
+/* 32-bit Thumb-2 code.  */
+#define TARGET_THUMB2			(TARGET_THUMB && arm_arch_thumb2)
+/* APPLE LOCAL end v7 support. Merge from mainline */
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+/* Thumb-1 only.  */
+#define TARGET_THUMB1_ONLY		(TARGET_THUMB1 && !arm_arch_notm)
+
+/* The following two macros concern the ability to execute coprocessor
+   instructions for VFPv3 or NEON.  TARGET_VFP3 is currently only ever
+   tested when we know we are generating for VFP hardware; we need to
+   be more careful with TARGET_NEON as noted below.  */
+
+/* LLVM LOCAL begin */
+/* FPU is has the full VFPv3/NEON register file of 32 D registers.  */
+#define TARGET_VFP3_REGSET (arm_fp_model == ARM_FP_MODEL_VFP \
+			    && (arm_fpu_arch == FPUTYPE_VFP3 \
+				|| arm_fpu_arch == FPUTYPE_NEON))
+
+/* FPU supports VFPv3 instructions.  */
+#define TARGET_VFP3 (arm_fp_model == ARM_FP_MODEL_VFP \
+		     && (arm_fpu_arch == FPUTYPE_VFP3))
+/* LLVM LOCAL end */
+
+/* FPU supports Neon instructions.  The setting of this macro gets
+   revealed via __ARM_NEON__ so we add extra guards upon TARGET_32BIT
+   and TARGET_HARD_FLOAT to ensure that NEON instructions are
+   available.  */
+#define TARGET_NEON (TARGET_32BIT && TARGET_HARD_FLOAT \
+                     && arm_fp_model == ARM_FP_MODEL_VFP \
+		     && arm_fpu_arch == FPUTYPE_NEON)
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+
+/* "DSP" multiply instructions, eg. SMULxy.  */
+#define TARGET_DSP_MULTIPLY \
+  (TARGET_32BIT && arm_arch5e && arm_arch_notm)
+/* Integer SIMD instructions, and extend-accumulate instructions.  */
+#define TARGET_INT_SIMD \
+  (TARGET_32BIT && arm_arch6 && arm_arch_notm)
+
+/* We could use unified syntax for arm mode, but for now we just use it
+   for Thumb-2.  */
+#define TARGET_UNIFIED_ASM TARGET_THUMB2
 
 /* APPLE LOCAL begin ARM compact switch tables */
 /* Use compact switch tables with libgcc handlers.  */
 #define TARGET_COMPACT_SWITCH_TABLES \
-  (TARGET_THUMB && !TARGET_LONG_CALLS)
+  (TARGET_THUMB1 && !TARGET_LONG_CALLS)
 /* APPLE LOCAL end ARM compact switch tables */
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* True iff the full BPABI is being used.  If TARGET_BPABI is true,
    then TARGET_AAPCS_BASED must be true -- but the converse does not
@@ -273,7 +354,13 @@ enum fputype
   /* Cirrus Maverick floating point co-processor.  */
   FPUTYPE_MAVERICK,
   /* VFP.  */
-  FPUTYPE_VFP
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+  FPUTYPE_VFP,
+  /* VFPv3.  */
+  FPUTYPE_VFP3,
+  /* Neon.  */
+  FPUTYPE_NEON
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 };
 
 /* Recast the floating point class to be the floating point attribute.  */
@@ -341,6 +428,19 @@ extern int arm_arch5e;
 /* Nonzero if this chip supports the ARM Architecture 6 extensions.  */
 extern int arm_arch6;
 
+/* LLVM LOCAL Declare arm_arch7a for use when setting the target triple.  */
+extern int arm_arch7a;
+
+/* APPLE LOCAL begin 6258536 Atomic builtins */
+/* Nonzero if this chip supports the ARM Architecture 7a extensions.  */
+extern int arm_arch7a;
+/* APPLE LOCAL end 6258536 Atomic builtins */
+
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* Nonzero if instructions not present in the 'M' profile can be used.  */
+extern int arm_arch_notm;
+
+/* APPLE LOCAL end v7 support. Merge from mainline */
 /* Nonzero if this chip can benefit from load scheduling.  */
 extern int arm_ld_sched;
 
@@ -372,6 +472,14 @@ extern int arm_tune_wbuf;
    interworking clean.  */
 extern int arm_cpp_interwork;
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* Nonzero if chip supports Thumb 2.  */
+extern int arm_arch_thumb2;
+
+/* Nonzero if chip supports integer division instruction.  */
+extern int arm_arch_hwdiv;
+
+/* APPLE LOCAL end v7 support. Merge from mainline */
 #ifndef TARGET_DEFAULT
 #define TARGET_DEFAULT  (MASK_APCS_FRAME)
 #endif
@@ -465,6 +573,14 @@ extern int arm_cpp_interwork;
 
 #define UNITS_PER_WORD	4
 
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+/* Use the option -mvectorize-with-neon-quad to override the use of doubleword
+   registers when autovectorizing for Neon, at least until multiple vector
+   widths are supported properly by the middle-end.  */
+#define UNITS_PER_SIMD_WORD \
+  (TARGET_NEON ? (TARGET_NEON_VECTORIZE_QUAD ? 16 : 8) : UNITS_PER_WORD)
+
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 /* True if natural alignment is used for doubleword types.  */
 #define ARM_DOUBLEWORD_ALIGN	TARGET_AAPCS_BASED
 
@@ -639,6 +755,12 @@ extern int arm_structure_size_boundary;
   1,1,1,1,1,1,1,1,	\
   1,1,1,1,1,1,1,1,	\
   1,1,1,1,1,1,1,1,	\
+/* APPLE LOCAL begin v7 support. Merge from mainline */ \
+  1,1,1,1,1,1,1,1,	\
+  1,1,1,1,1,1,1,1,	\
+  1,1,1,1,1,1,1,1,	\
+  1,1,1,1,1,1,1,1,	\
+/* APPLE LOCAL end v7 support. Merge from mainline */ \
   1			\
 }
 
@@ -665,6 +787,12 @@ extern int arm_structure_size_boundary;
   1,1,1,1,1,1,1,1,	     \
   1,1,1,1,1,1,1,1,	     \
   1,1,1,1,1,1,1,1,	     \
+/* APPLE LOCAL begin v7 support. Merge from mainline */ \
+  1,1,1,1,1,1,1,1,	     \
+  1,1,1,1,1,1,1,1,	     \
+  1,1,1,1,1,1,1,1,	     \
+  1,1,1,1,1,1,1,1,	     \
+/* APPLE LOCAL end v7 support. Merge from mainline */ \
   1			     \
 }
 
@@ -676,7 +804,8 @@ extern int arm_structure_size_boundary;
 {								\
   int regno;							\
 								\
-  if (TARGET_SOFT_FLOAT || TARGET_THUMB || !TARGET_FPA)		\
+  /* APPLE LOCAL v7 support. Merge from mainline */         \
+  if (TARGET_SOFT_FLOAT || TARGET_THUMB1 || !TARGET_FPA)	\
     {								\
       for (regno = FIRST_FPA_REGNUM;				\
 	   regno <= LAST_FPA_REGNUM; ++regno)			\
@@ -688,6 +817,8 @@ extern int arm_structure_size_boundary;
       /* When optimizing for size, it's better not to use	\
 	 the HI regs, because of the overhead of stacking 	\
 	 them.  */						\
+      /* APPLE LOCAL v7 support. Merge from mainline */     \
+      /* ??? Is this still true for thumb2?  */			\
       for (regno = FIRST_HI_REGNUM;				\
 	   regno <= LAST_HI_REGNUM; ++regno)			\
 	fixed_regs[regno] = call_used_regs[regno] = 1;		\
@@ -696,10 +827,12 @@ extern int arm_structure_size_boundary;
   /* The link register can be clobbered by any branch insn,	\
      but we have no way to track that at present, so mark	\
      it as unavailable.  */					\
-  if (TARGET_THUMB)						\
+  /* APPLE LOCAL v7 support. Merge from mainline */         \
+  if (TARGET_THUMB1)						\
     fixed_regs[LR_REGNUM] = call_used_regs[LR_REGNUM] = 1;	\
 								\
-  if (TARGET_ARM && TARGET_HARD_FLOAT)				\
+  /* APPLE LOCAL v7 support. Merge from mainline */         \
+  if (TARGET_32BIT && TARGET_HARD_FLOAT)			\
     {								\
       if (TARGET_MAVERICK)					\
 	{							\
@@ -713,15 +846,21 @@ extern int arm_structure_size_boundary;
 	      call_used_regs[regno] = regno < FIRST_CIRRUS_FP_REGNUM + 4; \
 	    }							\
 	}							\
+      /* APPLE LOCAL begin v7 support. Merge from mainline */ \
       if (TARGET_VFP)						\
 	{							\
+	  /* VFPv3 registers are disabled when earlier VFP	\
+	     versions are selected due to the definition of	\
+	     LAST_VFP_REGNUM.  */				\
 	  for (regno = FIRST_VFP_REGNUM;			\
 	       regno <= LAST_VFP_REGNUM; ++ regno)		\
 	    {							\
 	      fixed_regs[regno] = 0;				\
-	      call_used_regs[regno] = regno < FIRST_VFP_REGNUM + 16; \
+	      call_used_regs[regno] = regno < FIRST_VFP_REGNUM + 16 \
+	      	|| regno >= FIRST_VFP_REGNUM + 32;		\
 	    }							\
 	}							\
+      /* APPLE LOCAL end v7 support. Merge from mainline */ \
     }								\
 								\
   if (TARGET_REALLY_IWMMXT)					\
@@ -835,7 +974,8 @@ extern int arm_structure_size_boundary;
 /* The native (Norcroft) Pascal compiler for the ARM passes the static chain
    as an invisible last argument (possible since varargs don't exist in
    Pascal), so the following is not true.  */
-#define STATIC_CHAIN_REGNUM	(TARGET_ARM ? 12 : 9)
+/* APPLE LOCAL v7 support. Merge from mainline */
+#define STATIC_CHAIN_REGNUM	12
 
 /* Define this to be where the real frame pointer is if it is not possible to
    work out the offset between the frame pointer and the automatic variables
@@ -894,15 +1034,59 @@ extern int arm_structure_size_boundary;
   (((REGNUM) >= FIRST_CIRRUS_FP_REGNUM) && ((REGNUM) <= LAST_CIRRUS_FP_REGNUM))
 
 #define FIRST_VFP_REGNUM	63
-#define LAST_VFP_REGNUM		94
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+#define D7_VFP_REGNUM		78  /* Registers 77 and 78 == VFP reg D7.  */
+/* LLVM LOCAL begin */
+#define LAST_VFP_REGNUM							\
+  (TARGET_VFP3_REGSET ? LAST_HI_VFP_REGNUM : LAST_LO_VFP_REGNUM)
+/* LLVM LOCAL end */
+
 #define IS_VFP_REGNUM(REGNUM) \
   (((REGNUM) >= FIRST_VFP_REGNUM) && ((REGNUM) <= LAST_VFP_REGNUM))
 
+/* VFP registers are split into two types: those defined by VFP versions < 3
+   have D registers overlaid on consecutive pairs of S registers. VFP version 3
+   defines 16 new D registers (d16-d31) which, for simplicity and correctness
+   in various parts of the backend, we implement as "fake" single-precision
+   registers (which would be S32-S63, but cannot be used in that way).  The
+   following macros define these ranges of registers.  */
+#define LAST_LO_VFP_REGNUM	94
+#define FIRST_HI_VFP_REGNUM	95
+#define LAST_HI_VFP_REGNUM	126
+
+/* APPLE LOCAL 6150859 begin use NEON instructions for SF math */
+/* For NEON, SFmode values are only valid in even registers.  */
+#define VFP_REGNO_OK_FOR_SINGLE(REGNUM) \
+  (((REGNUM) <= LAST_LO_VFP_REGNUM) \
+   && (TARGET_NEON ? ((((REGNUM) - FIRST_VFP_REGNUM) & 1) == 0): 1))
+/* APPLE LOCAL 6150859 end use NEON instructions for SF math */
+
+/* DFmode values are only valid in even register pairs.  */
+#define VFP_REGNO_OK_FOR_DOUBLE(REGNUM) \
+  ((((REGNUM) - FIRST_VFP_REGNUM) & 1) == 0)
+
+/* APPLE LOCAL end v7 support. Merge from mainline */
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+/* Neon Quad values must start at a multiple of four registers.  */
+#define NEON_REGNO_OK_FOR_QUAD(REGNUM) \
+  ((((REGNUM) - FIRST_VFP_REGNUM) & 3) == 0)
+
+/* Neon structures of vectors must be in even register pairs and there
+   must be enough registers available.  Because of various patterns
+   requiring quad registers, we require them to start at a multiple of
+   four.  */
+#define NEON_REGNO_OK_FOR_NREGS(REGNUM, N) \
+  ((((REGNUM) - FIRST_VFP_REGNUM) & 3) == 0 \
+   && (LAST_VFP_REGNUM - (REGNUM) >= 2 * (N) - 1))
+
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 /* The number of hard registers is 16 ARM + 8 FPA + 1 CC + 1 SFP + 1 AFP.  */
 /* + 16 Cirrus registers take us up to 43.  */
 /* Intel Wireless MMX Technology registers add 16 + 4 more.  */
-/* VFP adds 32 + 1 more.  */
-#define FIRST_PSEUDO_REGISTER   96
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* VFP (VFP3) adds 32 (64) + 1 more.  */
+#define FIRST_PSEUDO_REGISTER   128
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 #define DBX_REGISTER_NUMBER(REGNO) arm_dbx_register_number (REGNO)
 
@@ -937,7 +1121,8 @@ extern int arm_structure_size_boundary;
    On the ARM regs are UNITS_PER_WORD bits wide; FPA regs can hold any FP
    mode.  */
 #define HARD_REGNO_NREGS(REGNO, MODE)  	\
-  ((TARGET_ARM 				\
+/* APPLE LOCAL v7 support. Merge from mainline */ \
+  ((TARGET_32BIT			\
     && REGNO >= FIRST_FPA_REGNUM	\
     && REGNO != FRAME_POINTER_REGNUM	\
     && REGNO != ARG_POINTER_REGNUM)	\
@@ -955,33 +1140,67 @@ extern int arm_structure_size_boundary;
 #define MODES_TIEABLE_P(MODE1, MODE2)  \
   (GET_MODE_CLASS (MODE1) == GET_MODE_CLASS (MODE2))
 
+/* APPLE LOCAL begin 7083296 Build without warnings.  */
+/* The VALID_IWMMXT_REG_MODE macro is used in vec-common.md as a predicate so
+   that it is referenced from the generated insn-opinit.c file, which does
+   not include arm-protos.h.  Define a separate function to avoid warnings.  */
 #define VALID_IWMMXT_REG_MODE(MODE) \
- (arm_vector_mode_supported_p (MODE) || (MODE) == DImode)
+  (valid_iwmmxt_reg_mode (MODE))
+extern int valid_iwmmxt_reg_mode (int);
+/* APPLE LOCAL end 7083296 Build without warnings.  */
+
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+/* Modes valid for Neon D registers.  */
+/* LLVM LOCAL begin */
+#define VALID_NEON_DREG_MODE(MODE) \
+  ((MODE) == V2SImode || (MODE) == V4HImode || (MODE) == V8QImode \
+   || (MODE) == V2SFmode || (MODE) == V1DImode)
+/* LLVM LOCAL end */
+
+/* Modes valid for Neon Q registers.  */
+#define VALID_NEON_QREG_MODE(MODE) \
+  ((MODE) == V4SImode || (MODE) == V8HImode || (MODE) == V16QImode \
+   || (MODE) == V4SFmode || (MODE) == V2DImode)
+
+/* Structure modes valid for Neon registers.  */
+#define VALID_NEON_STRUCT_MODE(MODE) \
+  ((MODE) == TImode || (MODE) == EImode || (MODE) == OImode \
+   || (MODE) == CImode || (MODE) == XImode)
 
 /* The order in which register should be allocated.  It is good to use ip
    since no saving is required (though calls clobber it) and it never contains
    function parameters.  It is quite good to use lr since other calls may
    clobber it anyway.  Allocate r0 through r3 in reverse order since r3 is
    least likely to contain a function parameter; in addition results are
-   returned in r0.  */
+   returned in r0.
+   For VFP/VFPv3, allocate caller-saved registers first (D0-D7), then D16-D31,
+   then D8-D15.  The reason for doing this is to attempt to reduce register
+   pressure when both single- and double-precision registers are used in a
+   function, but hopefully not force double-precision registers to be
+   callee-saved when it's not necessary. */
 
-#define REG_ALLOC_ORDER  	    \
-{                                   \
-     3,  2,  1,  0, 12, 14,  4,  5, \
-     6,  7,  8, 10,  9, 11, 13, 15, \
-    16, 17, 18, 19, 20, 21, 22, 23, \
-    27, 28, 29, 30, 31, 32, 33, 34, \
-    35, 36, 37, 38, 39, 40, 41, 42, \
-    43, 44, 45, 46, 47, 48, 49, 50, \
-    51, 52, 53, 54, 55, 56, 57, 58, \
-    59, 60, 61, 62,		    \
-    24, 25, 26,			    \
-    78, 77, 76, 75, 74, 73, 72, 71, \
-    70, 69, 68, 67, 66, 65, 64, 63, \
-    79, 80, 81, 82, 83, 84, 85, 86, \
-    87, 88, 89, 90, 91, 92, 93, 94, \
-    95				    \
+#define REG_ALLOC_ORDER				\
+{						\
+     3,  2,  1,  0, 12, 14,  4,  5,		\
+     6,  7,  8, 10,  9, 11, 13, 15,		\
+    16, 17, 18, 19, 20, 21, 22, 23,		\
+    27, 28, 29, 30, 31, 32, 33, 34,		\
+    35, 36, 37, 38, 39, 40, 41, 42,		\
+    43, 44, 45, 46, 47, 48, 49, 50,		\
+    51, 52, 53, 54, 55, 56, 57, 58,		\
+    59, 60, 61, 62,				\
+    24, 25, 26,					\
+    78,  77,  76,  75,  74,  73,  72,  71,	\
+    70,  69,  68,  67,  66,  65,  64,  63,	\
+    95,  96,  97,  98,  99, 100, 101, 102,	\
+   103, 104, 105, 106, 107, 108, 109, 110,	\
+   111, 112, 113, 114, 115, 116, 117, 118,	\
+   119, 120, 121, 122, 123, 124, 125, 126,	\
+    79,  80,  81,  82,  83,  84,  85,  86,	\
+    87,  88,  89,  90,  91,  92,  93,  94,	\
+   127						\
 }
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 
 /* APPLE LOCAL begin 5831562 add DIMODE_REG_ALLOC_ORDER */
 #define DIMODE_REG_ALLOC_ORDER  	    \
@@ -1014,11 +1233,15 @@ extern int arm_structure_size_boundary;
 
 /* Register classes: used to be simple, just all ARM regs or all FPA regs
    Now that the Thumb is involved it has become more complicated.  */
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 enum reg_class
 {
   NO_REGS,
   FPA_REGS,
   CIRRUS_REGS,
+  VFP_D0_D7_REGS,
+  VFP_LO_REGS,
+  VFP_HI_REGS,
   VFP_REGS,
   IWMMXT_GR_REGS,
   IWMMXT_REGS,
@@ -1041,6 +1264,9 @@ enum reg_class
   "NO_REGS",		\
   "FPA_REGS",		\
   "CIRRUS_REGS",	\
+  "VFP_D0_D7_REGS",	\
+  "VFP_LO_REGS",	\
+  "VFP_HI_REGS",	\
   "VFP_REGS",		\
   "IWMMXT_GR_REGS",	\
   "IWMMXT_REGS",	\
@@ -1057,23 +1283,32 @@ enum reg_class
 /* Define which registers fit in which classes.
    This is an initializer for a vector of HARD_REG_SET
    of length N_REG_CLASSES.  */
-#define REG_CLASS_CONTENTS					\
-{								\
-  { 0x00000000, 0x00000000, 0x00000000 }, /* NO_REGS  */	\
-  { 0x00FF0000, 0x00000000, 0x00000000 }, /* FPA_REGS */	\
-  { 0xF8000000, 0x000007FF, 0x00000000 }, /* CIRRUS_REGS */	\
-  { 0x00000000, 0x80000000, 0x7FFFFFFF }, /* VFP_REGS  */	\
-  { 0x00000000, 0x00007800, 0x00000000 }, /* IWMMXT_GR_REGS */	\
-  { 0x00000000, 0x7FFF8000, 0x00000000 }, /* IWMMXT_REGS */	\
-  { 0x000000FF, 0x00000000, 0x00000000 }, /* LO_REGS */		\
-  { 0x00002000, 0x00000000, 0x00000000 }, /* STACK_REG */	\
-  { 0x000020FF, 0x00000000, 0x00000000 }, /* BASE_REGS */	\
-  { 0x0000FF00, 0x00000000, 0x00000000 }, /* HI_REGS */		\
-  { 0x01000000, 0x00000000, 0x00000000 }, /* CC_REG */		\
-  { 0x00000000, 0x00000000, 0x80000000 }, /* VFPCC_REG */	\
-  { 0x0200FFFF, 0x00000000, 0x00000000 }, /* GENERAL_REGS */	\
-  { 0xFAFFFFFF, 0xFFFFFFFF, 0x7FFFFFFF }  /* ALL_REGS */	\
+#define REG_CLASS_CONTENTS						\
+{									\
+  { 0x00000000, 0x00000000, 0x00000000, 0x00000000 }, /* NO_REGS  */	\
+  { 0x00FF0000, 0x00000000, 0x00000000, 0x00000000 }, /* FPA_REGS */	\
+  { 0xF8000000, 0x000007FF, 0x00000000, 0x00000000 }, /* CIRRUS_REGS */	\
+  { 0x00000000, 0x80000000, 0x00007FFF, 0x00000000 }, /* VFP_D0_D7_REGS  */ \
+  { 0x00000000, 0x80000000, 0x7FFFFFFF, 0x00000000 }, /* VFP_LO_REGS  */ \
+  { 0x00000000, 0x00000000, 0x80000000, 0x7FFFFFFF }, /* VFP_HI_REGS  */ \
+  { 0x00000000, 0x80000000, 0xFFFFFFFF, 0x7FFFFFFF }, /* VFP_REGS  */	\
+  { 0x00000000, 0x00007800, 0x00000000, 0x00000000 }, /* IWMMXT_GR_REGS */ \
+  { 0x00000000, 0x7FFF8000, 0x00000000, 0x00000000 }, /* IWMMXT_REGS */	\
+  { 0x000000FF, 0x00000000, 0x00000000, 0x00000000 }, /* LO_REGS */	\
+  { 0x00002000, 0x00000000, 0x00000000, 0x00000000 }, /* STACK_REG */	\
+  { 0x000020FF, 0x00000000, 0x00000000, 0x00000000 }, /* BASE_REGS */	\
+  { 0x0000FF00, 0x00000000, 0x00000000, 0x00000000 }, /* HI_REGS */	\
+  { 0x01000000, 0x00000000, 0x00000000, 0x00000000 }, /* CC_REG */	\
+  { 0x00000000, 0x00000000, 0x00000000, 0x80000000 }, /* VFPCC_REG */	\
+  { 0x0200FFFF, 0x00000000, 0x00000000, 0x00000000 }, /* GENERAL_REGS */ \
+  { 0xFAFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x7FFFFFFF }  /* ALL_REGS */	\
 }
+
+/* Any of the VFP register classes.  */
+#define IS_VFP_CLASS(X) \
+  ((X) == VFP_D0_D7_REGS || (X) == VFP_LO_REGS \
+   || (X) == VFP_HI_REGS || (X) == VFP_REGS)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* The same information, inverted:
    Return the class number of the smallest class containing
@@ -1097,34 +1332,39 @@ enum reg_class
     ((TARGET_THUMB && (CLASS) == LO_REGS)	\
      || (CLASS) == CC_REG)
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 /* The class value for index registers, and the one for base regs.  */
-#define INDEX_REG_CLASS  (TARGET_THUMB ? LO_REGS : GENERAL_REGS)
-#define BASE_REG_CLASS   (TARGET_THUMB ? LO_REGS : GENERAL_REGS)
+#define INDEX_REG_CLASS  (TARGET_THUMB1 ? LO_REGS : GENERAL_REGS)
+#define BASE_REG_CLASS   (TARGET_THUMB1 ? LO_REGS : GENERAL_REGS)
 
 /* For the Thumb the high registers cannot be used as base registers
    when addressing quantities in QI or HI mode; if we don't know the
    mode, then we must be conservative.  */
 #define MODE_BASE_REG_CLASS(MODE)					\
-    (TARGET_ARM ? GENERAL_REGS :					\
+    (TARGET_32BIT ? GENERAL_REGS :					\
      (((MODE) == SImode) ? BASE_REGS : LO_REGS))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* For Thumb we can not support SP+reg addressing, so we return LO_REGS
    instead of BASE_REGS.  */
 #define MODE_BASE_REG_REG_CLASS(MODE) BASE_REG_CLASS
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 /* When SMALL_REGISTER_CLASSES is nonzero, the compiler allows
    registers explicitly used in the rtl to be used as spill registers
    but prevents the compiler from extending the lifetime of these
    registers.  */
-#define SMALL_REGISTER_CLASSES   TARGET_THUMB
+#define SMALL_REGISTER_CLASSES   TARGET_THUMB1
 
 /* Given an rtx X being reloaded into a reg required to be
    in class CLASS, return the class of reg to actually use.
-   In general this is just CLASS, but for the Thumb we prefer
-   a LO_REGS class or a subset.  */
-#define PREFERRED_RELOAD_CLASS(X, CLASS)	\
-  (TARGET_ARM ? (CLASS) :			\
-   ((CLASS) == BASE_REGS ? (CLASS) : LO_REGS))
+   In general this is just CLASS, but for the Thumb core registers and
+   immediate constants we prefer a LO_REGS class or a subset.  */
+#define PREFERRED_RELOAD_CLASS(X, CLASS)		\
+  (TARGET_ARM ? (CLASS) :				\
+   ((CLASS) == GENERAL_REGS || (CLASS) == HI_REGS	\
+    || (CLASS) == NO_REGS ? LO_REGS : (CLASS)))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Must leave BASE_REGS reloads alone */
 #define THUMB_SECONDARY_INPUT_RELOAD_CLASS(CLASS, MODE, X)		\
@@ -1144,14 +1384,15 @@ enum reg_class
 /* Return the register class of a scratch register needed to copy IN into
    or out of a register in CLASS in MODE.  If it can be done directly,
    NO_REGS is returned.  */
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 #define SECONDARY_OUTPUT_RELOAD_CLASS(CLASS, MODE, X)		\
   /* Restrict which direct reloads are allowed for VFP/iWMMXt regs.  */ \
   ((TARGET_VFP && TARGET_HARD_FLOAT				\
-    && (CLASS) == VFP_REGS)					\
+    && IS_VFP_CLASS (CLASS))					\
    ? coproc_secondary_reload_class (MODE, X, FALSE)		\
    : (TARGET_IWMMXT && (CLASS) == IWMMXT_REGS)			\
    ? coproc_secondary_reload_class (MODE, X, TRUE)		\
-   : TARGET_ARM							\
+   : TARGET_32BIT					\
    ? (((MODE) == HImode && ! arm_arch4 && true_regnum (X) == -1) \
     ? GENERAL_REGS : NO_REGS)					\
    : THUMB_SECONDARY_OUTPUT_RELOAD_CLASS (CLASS, MODE, X))
@@ -1160,7 +1401,7 @@ enum reg_class
 #define SECONDARY_INPUT_RELOAD_CLASS(CLASS, MODE, X)		\
   /* Restrict which direct reloads are allowed for VFP/iWMMXt regs.  */ \
   ((TARGET_VFP && TARGET_HARD_FLOAT				\
-    && (CLASS) == VFP_REGS)					\
+    && IS_VFP_CLASS (CLASS))					\
     ? coproc_secondary_reload_class (MODE, X, FALSE) :		\
     (TARGET_IWMMXT && (CLASS) == IWMMXT_REGS) ?			\
     coproc_secondary_reload_class (MODE, X, TRUE) :		\
@@ -1169,7 +1410,7 @@ enum reg_class
      && (CLASS) == CIRRUS_REGS					\
      && (CONSTANT_P (X) || GET_CODE (X) == SYMBOL_REF))		\
     ? GENERAL_REGS :						\
-  (TARGET_ARM ?							\
+  (TARGET_32BIT ?						\
    (((CLASS) == IWMMXT_REGS || (CLASS) == IWMMXT_GR_REGS)	\
       && CONSTANT_P (X))					\
    ? GENERAL_REGS :						\
@@ -1179,6 +1420,7 @@ enum reg_class
 	     && true_regnum (X) == -1)))			\
     ? GENERAL_REGS : NO_REGS)					\
    : THUMB_SECONDARY_INPUT_RELOAD_CLASS (CLASS, MODE, X)))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Try a machine-dependent way of reloading an illegitimate address
    operand.  If we find one, push the reload and jump to WIN.  This
@@ -1248,6 +1490,8 @@ enum reg_class
 /* We could probably achieve better results by defining PROMOTE_MODE to help
    cope with the variances between the Thumb's signed and unsigned byte and
    halfword load instructions.  */
+/* APPLE LOCAL v7 support. Merge from mainline */
+/* ??? This should be safe for thumb2, but we may be able to do better.  */
 #define THUMB_LEGITIMIZE_RELOAD_ADDRESS(X, MODE, OPNUM, TYPE, IND_L, WIN)     \
 do {									      \
   rtx new_x = thumb_legitimize_reload_address (&X, MODE, OPNUM, TYPE, IND_L); \
@@ -1273,13 +1517,14 @@ do {									      \
 /* If defined, gives a class of registers that cannot be used as the
    operand of a SUBREG that changes the mode of the object illegally.  */
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 /* Moves between FPA_REGS and GENERAL_REGS are two memory insns.  */
 #define REGISTER_MOVE_COST(MODE, FROM, TO)		\
-  (TARGET_ARM ?						\
+  (TARGET_32BIT ?						\
    ((FROM) == FPA_REGS && (TO) != FPA_REGS ? 20 :	\
     (FROM) != FPA_REGS && (TO) == FPA_REGS ? 20 :	\
-    (FROM) == VFP_REGS && (TO) != VFP_REGS ? 10 :  \
-    (FROM) != VFP_REGS && (TO) == VFP_REGS ? 10 :  \
+    IS_VFP_CLASS (FROM) && !IS_VFP_CLASS (TO) ? 10 :	\
+    !IS_VFP_CLASS (FROM) && IS_VFP_CLASS (TO) ? 10 :	\
     (FROM) == IWMMXT_REGS && (TO) != IWMMXT_REGS ? 4 :  \
     (FROM) != IWMMXT_REGS && (TO) == IWMMXT_REGS ? 4 :  \
     (FROM) == IWMMXT_GR_REGS || (TO) == IWMMXT_GR_REGS ? 20 :  \
@@ -1288,6 +1533,7 @@ do {									      \
    2)							\
    :							\
    ((FROM) == HI_REGS || (TO) == HI_REGS) ? 4 : 2)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Stack layout; function entry, exit and calling.  */
 
@@ -1346,13 +1592,14 @@ do {									      \
    on the stack.  */
 #define RETURN_POPS_ARGS(FUNDECL, FUNTYPE, SIZE)  0
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 /* Define how to find the value returned by a library function
    assuming the value has mode MODE.  */
 #define LIBCALL_VALUE(MODE)  \
-  (TARGET_ARM && TARGET_HARD_FLOAT_ABI && TARGET_FPA			\
+  (TARGET_32BIT && TARGET_HARD_FLOAT_ABI && TARGET_FPA			\
    && GET_MODE_CLASS (MODE) == MODE_FLOAT				\
    ? gen_rtx_REG (MODE, FIRST_FPA_REGNUM)				\
-   : TARGET_ARM && TARGET_HARD_FLOAT_ABI && TARGET_MAVERICK		\
+   : TARGET_32BIT && TARGET_HARD_FLOAT_ABI && TARGET_MAVERICK		\
      && GET_MODE_CLASS (MODE) == MODE_FLOAT				\
    ? gen_rtx_REG (MODE, FIRST_CIRRUS_FP_REGNUM) 			\
    : TARGET_IWMMXT_ABI && arm_vector_mode_supported_p (MODE)    	\
@@ -1371,11 +1618,12 @@ do {									      \
 /* On a Cirrus chip, mvf0 can return results.  */
 #define FUNCTION_VALUE_REGNO_P(REGNO)  \
   ((REGNO) == ARG_REGISTER (1) \
-   || (TARGET_ARM && ((REGNO) == FIRST_CIRRUS_FP_REGNUM)		\
+   || (TARGET_32BIT && ((REGNO) == FIRST_CIRRUS_FP_REGNUM)		\
        && TARGET_HARD_FLOAT_ABI && TARGET_MAVERICK)			\
    || ((REGNO) == FIRST_IWMMXT_REGNUM && TARGET_IWMMXT_ABI) \
-   || (TARGET_ARM && ((REGNO) == FIRST_FPA_REGNUM)			\
+   || (TARGET_32BIT && ((REGNO) == FIRST_FPA_REGNUM)			\
        && TARGET_HARD_FLOAT_ABI && TARGET_FPA))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Amount of memory needed for an untyped call to save all possible return
    registers.  */
@@ -1422,6 +1670,8 @@ do {									      \
 #define ARM_FT_NAKED		(1 << 3) /* No prologue or epilogue.  */
 #define ARM_FT_VOLATILE		(1 << 4) /* Does not return.  */
 #define ARM_FT_NESTED		(1 << 5) /* Embedded inside another func.  */
+/* APPLE LOCAL v7 support. Merge from mainline */
+#define ARM_FT_STACKALIGN	(1 << 6) /* Called with misaligned stack.  */
 
 /* Some macros to test these flags.  */
 #define ARM_FUNC_TYPE(t)	(t & ARM_FT_TYPE_MASK)
@@ -1429,6 +1679,8 @@ do {									      \
 #define IS_VOLATILE(t)     	(t & ARM_FT_VOLATILE)
 #define IS_NAKED(t)        	(t & ARM_FT_NAKED)
 #define IS_NESTED(t)       	(t & ARM_FT_NESTED)
+/* APPLE LOCAL v7 support. Merge from mainline */
+#define IS_STACKALIGN(t)       	(t & ARM_FT_STACKALIGN)
 
 
 /* Structure used to hold the function stack frame layout.  Offsets are
@@ -1539,13 +1791,16 @@ typedef struct
 /* Update the data in CUM to advance over an argument
    of mode MODE and data type TYPE.
    (TYPE is null for libcalls where that information may not be available.)  */
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
 #define FUNCTION_ARG_ADVANCE(CUM, MODE, TYPE, NAMED)	\
   (CUM).nargs += 1;					\
-  if (arm_vector_mode_supported_p (MODE)	       	\
-      && (CUM).named_count > (CUM).nargs)		\
+  if (arm_vector_mode_supported_p (MODE)		\
+      && (CUM).named_count > (CUM).nargs		\
+      && TARGET_IWMMXT_ABI)				\
     (CUM).iwmmxt_nregs += 1;				\
   else							\
     (CUM).nregs += ARM_NUM_REGS2 (MODE, TYPE)
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 
 /* If defined, a C expression that gives the alignment boundary, in bits, of an
    argument with the specified mode and type.  If it is not defined,
@@ -1629,6 +1884,10 @@ typedef struct
 
 /* Determine if the epilogue should be output as RTL.
    You should override this if you define FUNCTION_EXTRA_EPILOGUE.  */
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* This is disabled for Thumb-2 because it will confuse the
+   conditional insn counter.  */
+/* APPLE LOCAL end v7 support. Merge from mainline */
 #define USE_RETURN_INSN(ISCOND)				\
   (TARGET_ARM ? use_return_insn (ISCOND, NULL) : 0)
 
@@ -1712,39 +1971,61 @@ typedef struct
 #define DOT_WORD ".word"
 /* APPLE LOCAL end ARM MACH assembler */
 
-/* On the Thumb we always switch into ARM mode to execute the trampoline.
-   Why - because it is easier.  This code will always be branched to via
-   a BX instruction and since the compiler magically generates the address
-   of the function the linker has no opportunity to ensure that the
-   bottom bit is set.  Thus the processor will be in ARM mode when it
-   reaches this code.  So we duplicate the ARM trampoline code and add
-   a switch into Thumb mode as well.  */
-#define THUMB_TRAMPOLINE_TEMPLATE(FILE)		\
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* The Thumb-2 trampoline is similar to the arm implementation.
+   Unlike 16-bit Thumb, we enter the stub in thumb mode.  */
+#define THUMB2_TRAMPOLINE_TEMPLATE(FILE)      \
+{               \
+  asm_fprintf (FILE, "\tldr.w\t%r, [%r, #4]\n",     \
+         STATIC_CHAIN_REGNUM, PC_REGNUM);     \
+  asm_fprintf (FILE, "\tldr.w\t%r, [%r, #4]\n",     \
+         PC_REGNUM, PC_REGNUM);       \
+  assemble_aligned_integer (UNITS_PER_WORD, const0_rtx);  \
+  assemble_aligned_integer (UNITS_PER_WORD, const0_rtx);  \
+}
+ 
+#define THUMB1_TRAMPOLINE_TEMPLATE(FILE)  \
 {						\
-  fprintf (FILE, "\t.code 32\n");		\
+  ASM_OUTPUT_ALIGN(FILE, 2);      \
+  fprintf (FILE, "\t.code\t16\n");    \
   fprintf (FILE, ".Ltrampoline_start:\n");	\
-  asm_fprintf (FILE, "\tldr\t%r, [%r, #8]\n",	\
-	       STATIC_CHAIN_REGNUM, PC_REGNUM);	\
-  asm_fprintf (FILE, "\tldr\t%r, [%r, #8]\n",	\
-	       IP_REGNUM, PC_REGNUM);		\
-  asm_fprintf (FILE, "\torr\t%r, %r, #1\n",     \
-	       IP_REGNUM, IP_REGNUM);     	\
-  asm_fprintf (FILE, "\tbx\t%r\n", IP_REGNUM);	\
-  /* APPLE LOCAL begin ARM MACH assembler */	\
-  fprintf (FILE, "\t" DOT_WORD "\t0\n");	\
-  fprintf (FILE, "\t" DOT_WORD "\t0\n");	\
-  /* APPLE LOCAL end ARM MACH assembler */	\
-  fprintf (FILE, "\t.code 16\n");		\
+  asm_fprintf (FILE, "\tpush\t{r0, r1}\n"); \
+  asm_fprintf (FILE, "\tldr\tr0, [%r, #8]\n", \
+         PC_REGNUM);      \
+  asm_fprintf (FILE, "\tmov\t%r, r0\n",   \
+         STATIC_CHAIN_REGNUM);    \
+  asm_fprintf (FILE, "\tldr\tr0, [%r, #8]\n", \
+         PC_REGNUM);      \
+  asm_fprintf (FILE, "\tstr\tr0, [%r, #4]\n", \
+         SP_REGNUM);      \
+  asm_fprintf (FILE, "\tpop\t{r0, %r}\n", \
+         PC_REGNUM);      \
+  assemble_aligned_integer (UNITS_PER_WORD, const0_rtx);  \
+  assemble_aligned_integer (UNITS_PER_WORD, const0_rtx);  \
 }
 
 #define TRAMPOLINE_TEMPLATE(FILE)		\
   if (TARGET_ARM)				\
     ARM_TRAMPOLINE_TEMPLATE (FILE)		\
+  else if (TARGET_THUMB2)     \
+    THUMB2_TRAMPOLINE_TEMPLATE (FILE)   \
   else						\
-    THUMB_TRAMPOLINE_TEMPLATE (FILE)
+    THUMB1_TRAMPOLINE_TEMPLATE (FILE)
 
+/* Thumb trampolines should be entered in thumb mode, so set the bottom bit
+   of the address.  */
+#define TRAMPOLINE_ADJUST_ADDRESS(ADDR) do            \
+{                     \
+  if (TARGET_THUMB)                 \
+    (ADDR) = expand_simple_binop (Pmode, IOR, (ADDR), GEN_INT(1),     \
+          gen_reg_rtx (Pmode), 0, OPTAB_LIB_WIDEN); \
+} while(0)
+
+
+/* APPLE LOCAL end v7 support. Merge from mainline */
 /* Length in units of the trampoline for entering a nested function.  */
-#define TRAMPOLINE_SIZE  (TARGET_ARM ? 16 : 24)
+/* APPLE LOCAL v7 support. Merge from Codesourcery */
+#define TRAMPOLINE_SIZE  (TARGET_32BIT ? 16 : 20)
 
 /* Alignment required for a trampoline in bits.  */
 #define TRAMPOLINE_ALIGNMENT  32
@@ -1754,32 +2035,36 @@ typedef struct
    FNADDR is an RTX for the address of the function's pure code.
    CXT is an RTX for the static chain value for the function.  */
 #ifndef INITIALIZE_TRAMPOLINE
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 #define INITIALIZE_TRAMPOLINE(TRAMP, FNADDR, CXT)			\
 {									\
   emit_move_insn (gen_rtx_MEM (SImode,					\
 			       plus_constant (TRAMP,			\
-					      TARGET_ARM ? 8 : 16)),	\
+					      TARGET_32BIT ? 8 : 12)),	\
 		  CXT);							\
   emit_move_insn (gen_rtx_MEM (SImode,					\
 			       plus_constant (TRAMP,			\
-					      TARGET_ARM ? 12 : 20)),	\
+					      TARGET_32BIT ? 12 : 16)),	\
 		  FNADDR);						\
   emit_library_call (gen_rtx_SYMBOL_REF (Pmode, "__clear_cache"),	\
 		     0, VOIDmode, 2, TRAMP, Pmode,			\
 		     plus_constant (TRAMP, TRAMPOLINE_SIZE), Pmode);	\
 }
+/* APPLE LOCAL end v7 support. Merge from mainline */
 #endif
 
 
 /* Addressing modes, and classification of registers for them.  */
 #define HAVE_POST_INCREMENT   1
-#define HAVE_PRE_INCREMENT    TARGET_ARM
-#define HAVE_POST_DECREMENT   TARGET_ARM
-#define HAVE_PRE_DECREMENT    TARGET_ARM
-#define HAVE_PRE_MODIFY_DISP  TARGET_ARM
-#define HAVE_POST_MODIFY_DISP TARGET_ARM
-#define HAVE_PRE_MODIFY_REG   TARGET_ARM
-#define HAVE_POST_MODIFY_REG  TARGET_ARM
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+#define HAVE_PRE_INCREMENT    TARGET_32BIT
+#define HAVE_POST_DECREMENT   TARGET_32BIT
+#define HAVE_PRE_DECREMENT    TARGET_32BIT
+#define HAVE_PRE_MODIFY_DISP  TARGET_32BIT
+#define HAVE_POST_MODIFY_DISP TARGET_32BIT
+#define HAVE_PRE_MODIFY_REG   TARGET_32BIT
+#define HAVE_POST_MODIFY_REG  TARGET_32BIT
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Macros to check register numbers against specific register classes.  */
 
@@ -1791,21 +2076,23 @@ typedef struct
 #define TEST_REGNO(R, TEST, VALUE) \
   ((R TEST VALUE) || ((unsigned) reg_renumber[R] TEST VALUE))
 
-/*   On the ARM, don't allow the pc to be used.  */
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* Don't allow the pc to be used.  */
 #define ARM_REGNO_OK_FOR_BASE_P(REGNO)			\
   (TEST_REGNO (REGNO, <, PC_REGNUM)			\
    || TEST_REGNO (REGNO, ==, FRAME_POINTER_REGNUM)	\
    || TEST_REGNO (REGNO, ==, ARG_POINTER_REGNUM))
 
-#define THUMB_REGNO_MODE_OK_FOR_BASE_P(REGNO, MODE)		\
+#define THUMB1_REGNO_MODE_OK_FOR_BASE_P(REGNO, MODE)		\
   (TEST_REGNO (REGNO, <=, LAST_LO_REGNUM)			\
    || (GET_MODE_SIZE (MODE) >= 4				\
        && TEST_REGNO (REGNO, ==, STACK_POINTER_REGNUM)))
 
 #define REGNO_MODE_OK_FOR_BASE_P(REGNO, MODE)		\
-  (TARGET_THUMB						\
-   ? THUMB_REGNO_MODE_OK_FOR_BASE_P (REGNO, MODE)	\
+  (TARGET_THUMB1					\
+   ? THUMB1_REGNO_MODE_OK_FOR_BASE_P (REGNO, MODE)	\
    : ARM_REGNO_OK_FOR_BASE_P (REGNO))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Nonzero if X can be the base register in a reg+reg addressing mode.
    For Thumb, we can not use SP + reg, so reject SP.  */
@@ -1831,6 +2118,8 @@ typedef struct
 
 #else
 
+/* APPLE LOCAL v7 support. Merge from mainline */
+/* ??? Should the TARGET_ARM here also apply to thumb2?  */
 #define CONSTANT_ADDRESS_P(X)  			\
   (GET_CODE (X) == SYMBOL_REF 			\
    && (CONSTANT_POOL_ADDRESS_P (X)		\
@@ -1854,10 +2143,12 @@ typedef struct
   || CONSTANT_ADDRESS_P (X)		\
   || flag_pic)
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 #define LEGITIMATE_CONSTANT_P(X)			\
   (!arm_tls_referenced_p (X)				\
-   && (TARGET_ARM ? ARM_LEGITIMATE_CONSTANT_P (X)	\
-		  : THUMB_LEGITIMATE_CONSTANT_P (X)))
+   && (TARGET_32BIT ? ARM_LEGITIMATE_CONSTANT_P (X)	\
+		    : THUMB_LEGITIMATE_CONSTANT_P (X)))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* APPLE LOCAL begin ARM longcall */
 #define SYMBOL_SHORT_CALL ((SYMBOL_FLAG_MACH_DEP) << 3)
@@ -1887,6 +2178,16 @@ typedef struct
 #define SUBTARGET_NAME_ENCODING_LENGTHS
 #endif
 
+/* LLVM LOCAL begin default name encoding */
+#ifndef ENABLE_LLVM
+#define DEFAULT_NAME_ENCODING_LENGTHS		\
+  case '*':  return 1;
+#else
+#define DEFAULT_NAME_ENCODING_LENGTHS		\
+  case '\1':  return 1;
+#endif
+/* LLVM LOCAL end default name encoding */
+
 /* This is a C fragment for the inside of a switch statement.
    Each case label should return the number of characters to
    be stripped from the start of a function's name, if that
@@ -1894,14 +2195,14 @@ typedef struct
 /* LLVM LOCAL */
 #if TARGET_MACHO
 #define ARM_NAME_ENCODING_LENGTHS		\
-  case '*':  return 1;				\
+  DEFAULT_NAME_ENCODING_LENGTHS			\
   SUBTARGET_NAME_ENCODING_LENGTHS
 /* LLVM LOCAL begin name encoding */
 #else
 #define ARM_NAME_ENCODING_LENGTHS		\
   case SHORT_CALL_FLAG_CHAR: return 1;		\
   case LONG_CALL_FLAG_CHAR:  return 1;		\
-  case '*':  return 1;				\
+  DEFAULT_NAME_ENCODING_LENGTHS			\
   SUBTARGET_NAME_ENCODING_LENGTHS
 #endif
 /* LLVM LOCAL end name encoding */
@@ -1913,6 +2214,13 @@ typedef struct
 #define ASM_OUTPUT_LABELREF(FILE, NAME)		\
    arm_asm_output_labelref (FILE, NAME)
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* Output IT instructions for conditonally executed Thumb-2 instructions.  */
+#define ASM_OUTPUT_OPCODE(STREAM, PTR)	\
+  if (TARGET_THUMB2)			\
+    thumb2_asm_output_opcode (STREAM);
+
+/* APPLE LOCAL end v7 support. Merge from mainline */
 /* The EABI specifies that constructors should go in .init_array.
    Other targets use .ctors for compatibility.  */
 #ifndef ARM_EABI_CTORS_SECTION_OP
@@ -1985,12 +2293,15 @@ typedef struct
 #define ARM_EABI_UNWIND_TABLES 0
 #endif
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 /* The macros REG_OK_FOR..._P assume that the arg is a REG rtx
    and check its validity for a certain class.
    We have two alternate definitions for each of them.
    The usual definition accepts all pseudo regs; the other rejects
    them unless they have been allocated suitable hard regs.
-   The symbol REG_OK_STRICT causes the latter definition to be used.  */
+   The symbol REG_OK_STRICT causes the latter definition to be used.
+   Thumb-2 has the same restictions as arm.  */
+/* APPLE LOCAL end v7 support. Merge from mainline */
 #ifndef REG_OK_STRICT
 
 #define ARM_REG_OK_FOR_BASE_P(X)		\
@@ -1999,7 +2310,8 @@ typedef struct
    || REGNO (X) == FRAME_POINTER_REGNUM		\
    || REGNO (X) == ARG_POINTER_REGNUM)
 
-#define THUMB_REG_MODE_OK_FOR_BASE_P(X, MODE)	\
+/* APPLE LOCAL v7 support. Merge from mainline */
+#define THUMB1_REG_MODE_OK_FOR_BASE_P(X, MODE)	\
   (REGNO (X) <= LAST_LO_REGNUM			\
    || REGNO (X) >= FIRST_PSEUDO_REGISTER	\
    || (GET_MODE_SIZE (MODE) >= 4		\
@@ -2014,8 +2326,10 @@ typedef struct
 #define ARM_REG_OK_FOR_BASE_P(X) 		\
   ARM_REGNO_OK_FOR_BASE_P (REGNO (X))
 
-#define THUMB_REG_MODE_OK_FOR_BASE_P(X, MODE)	\
-  THUMB_REGNO_MODE_OK_FOR_BASE_P (REGNO (X), MODE)
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+#define THUMB1_REG_MODE_OK_FOR_BASE_P(X, MODE)	\
+  THUMB1_REGNO_MODE_OK_FOR_BASE_P (REGNO (X), MODE)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 #define REG_STRICT_P 1
 
@@ -2023,24 +2337,27 @@ typedef struct
 
 /* Now define some helpers in terms of the above.  */
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 #define REG_MODE_OK_FOR_BASE_P(X, MODE)		\
-  (TARGET_THUMB					\
-   ? THUMB_REG_MODE_OK_FOR_BASE_P (X, MODE)	\
+  (TARGET_THUMB1				\
+   ? THUMB1_REG_MODE_OK_FOR_BASE_P (X, MODE)	\
    : ARM_REG_OK_FOR_BASE_P (X))
 
 #define ARM_REG_OK_FOR_INDEX_P(X) ARM_REG_OK_FOR_BASE_P (X)
 
-/* For Thumb, a valid index register is anything that can be used in
+/* For 16-bit Thumb, a valid index register is anything that can be used in
    a byte load instruction.  */
-#define THUMB_REG_OK_FOR_INDEX_P(X) THUMB_REG_MODE_OK_FOR_BASE_P (X, QImode)
+#define THUMB1_REG_OK_FOR_INDEX_P(X) \
+  THUMB1_REG_MODE_OK_FOR_BASE_P (X, QImode)
 
 /* Nonzero if X is a hard reg that can be used as an index
    or if it is a pseudo reg.  On the Thumb, the stack pointer
    is not suitable.  */
 #define REG_OK_FOR_INDEX_P(X)			\
-  (TARGET_THUMB					\
-   ? THUMB_REG_OK_FOR_INDEX_P (X)		\
+  (TARGET_THUMB1				\
+   ? THUMB1_REG_OK_FOR_INDEX_P (X)		\
    : ARM_REG_OK_FOR_INDEX_P (X))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Nonzero if X can be the base register in a reg+reg addressing mode.
    For Thumb, we can not use SP + reg, so reject SP.  */
@@ -2064,17 +2381,27 @@ typedef struct
       goto WIN;							\
   }
 
-#define THUMB_GO_IF_LEGITIMATE_ADDRESS(MODE,X,WIN)		\
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+#define THUMB2_GO_IF_LEGITIMATE_ADDRESS(MODE,X,WIN)		\
   {								\
-    if (thumb_legitimate_address_p (MODE, X, REG_STRICT_P))	\
+    if (thumb2_legitimate_address_p (MODE, X, REG_STRICT_P))	\
+      goto WIN;							\
+  }
+
+#define THUMB1_GO_IF_LEGITIMATE_ADDRESS(MODE,X,WIN)		\
+  {								\
+    if (thumb1_legitimate_address_p (MODE, X, REG_STRICT_P))	\
       goto WIN;							\
   }
 
 #define GO_IF_LEGITIMATE_ADDRESS(MODE, X, WIN)				\
   if (TARGET_ARM)							\
     ARM_GO_IF_LEGITIMATE_ADDRESS (MODE, X, WIN)  			\
-  else /* if (TARGET_THUMB) */						\
-    THUMB_GO_IF_LEGITIMATE_ADDRESS (MODE, X, WIN)
+  else if (TARGET_THUMB2)						\
+    THUMB2_GO_IF_LEGITIMATE_ADDRESS (MODE, X, WIN)  			\
+  else /* if (TARGET_THUMB1) */						\
+    THUMB1_GO_IF_LEGITIMATE_ADDRESS (MODE, X, WIN)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 
 /* Try machine-dependent ways of modifying an illegitimate address
@@ -2084,7 +2411,13 @@ do {							\
   X = arm_legitimize_address (X, OLDX, MODE);		\
 } while (0)
 
-#define THUMB_LEGITIMIZE_ADDRESS(X, OLDX, MODE, WIN)	\
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* ??? Implement LEGITIMIZE_ADDRESS for thumb2.  */
+#define THUMB2_LEGITIMIZE_ADDRESS(X, OLDX, MODE, WIN)	\
+do {							\
+} while (0)
+
+#define THUMB1_LEGITIMIZE_ADDRESS(X, OLDX, MODE, WIN)	\
 do {							\
   X = thumb_legitimize_address (X, OLDX, MODE);		\
 } while (0)
@@ -2093,12 +2426,15 @@ do {							\
 do {							\
   if (TARGET_ARM)					\
     ARM_LEGITIMIZE_ADDRESS (X, OLDX, MODE, WIN);	\
+  else if (TARGET_THUMB2)				\
+    THUMB2_LEGITIMIZE_ADDRESS (X, OLDX, MODE, WIN);	\
   else							\
-    THUMB_LEGITIMIZE_ADDRESS (X, OLDX, MODE, WIN);	\
+    THUMB1_LEGITIMIZE_ADDRESS (X, OLDX, MODE, WIN);	\
 							\
   if (memory_address_p (MODE, X))			\
     goto WIN;						\
 } while (0)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Go to LABEL if ADDR (a legitimate address expression)
    has an effect that depends on the machine mode it is used for.  */
@@ -2111,7 +2447,8 @@ do {							\
 
 /* Nothing helpful to do for the Thumb */
 #define GO_IF_MODE_DEPENDENT_ADDRESS(ADDR, LABEL)	\
-  if (TARGET_ARM)					\
+/* APPLE LOCAL v7 support. Merge from mainline */   \
+  if (TARGET_32BIT)					\
     ARM_GO_IF_MODE_DEPENDENT_ADDRESS (ADDR, LABEL)
 
 
@@ -2120,11 +2457,15 @@ do {							\
 #define CASE_VECTOR_MODE Pmode
 
 /* APPLE LOCAL begin ARM compact switch tables */
-#define CASE_VECTOR_PC_RELATIVE (TARGET_THUMB)
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+#define CASE_VECTOR_PC_RELATIVE (TARGET_THUMB || TARGET_THUMB2)
 
 #define CASE_VECTOR_SHORTEN_MODE(MIN_OFFSET, MAX_OFFSET, BODY)	\
-(TARGET_ARM ? SImode						\
+((TARGET_ARM ||                                                 \
+ (TARGET_THUMB2 && (MIN_OFFSET < 0 || MAX_OFFSET >= 0x2000))) ? SImode \
+ : TARGET_THUMB2 ? ((MAX_OFFSET >= 0x200) ? HImode : QImode)    \
  : !TARGET_COMPACT_SWITCH_TABLES ? SImode			\
+ /* TARGET_THUMB1 */                                            \
  : (MIN_OFFSET) >= -256 && (MAX_OFFSET) <= 254			\
  ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 0, QImode)	\
  : (MIN_OFFSET) >= 0 && (MAX_OFFSET) <= 510			\
@@ -2132,6 +2473,8 @@ do {							\
  : (MIN_OFFSET) >= -65536 && (MAX_OFFSET) <= 65534		\
  ? (ADDR_DIFF_VEC_FLAGS (BODY).offset_unsigned = 0, HImode)	\
  : SImode)
+/* APPLE LOCAL end v7 support. Merge from mainline */
+
 
 /* This macro uses variable "file" that exists at 
    the single place it is invoked, in final.c.  INSN_ADDRESSES 
@@ -2142,67 +2485,8 @@ do {							\
    count as first element, count does not include the last element.  
    All that is dealt with here. */
    
-
 #define ASM_OUTPUT_ADDR_DIFF_VEC(LABEL, BODY)				\
-do {									\
-  int idx, size = GET_MODE_SIZE (GET_MODE (BODY));			\
-  int pack = (TARGET_THUMB) ? 2 : 4;					\
-  /* APPLE LOCAL 5837498 assembler expr for (L1-L2)/2 */		\
-  /* removed unused variable "base_addr" */				\
-  int base_label_no = CODE_LABEL_NUMBER (LABEL);			\
-  int vlen = XVECLEN (BODY, 1); /*includes trailing default */		\
-  const char* directive;						\
-  if (GET_MODE (BODY) == QImode)					\
-      directive = ".byte";						\
-  else if (GET_MODE (BODY) == HImode)					\
-      directive = ".short";						\
-  else									\
-    {									\
-      pack = 1;		    						\
-      directive = ".long";						\
-    }									\
-  /* Alignment of table was handled by aligning its label,		\
-     in final_scan_insn. */						\
-  targetm.asm_out.internal_label (file, "L", base_label_no);		\
-  /* Default is not included in output count */				\
-  if (TARGET_COMPACT_SWITCH_TABLES)					\
-    asm_fprintf (file, "\t%s\t%d @ size\n", directive, vlen - 1);	\
-  for (idx = 0; idx < vlen; idx++)					\
-    {									\
-      rtx target_label = XEXP (XVECEXP (BODY, 1, idx), 0);		\
-      /* APPLE LOCAL begin 5837498 assembler expr for (L1-L2)/2 */	\
-      if (GET_MODE (BODY) != SImode)					\
-        {								\
-	  /* ARM mode is always SImode bodies */			\
-	  gcc_assert (!TARGET_ARM);					\
-	  /* APPLE LOCAL 5903944 */					\
-	  asm_fprintf (file, "\t%s\t(L%d-L%d)/%d\n",			\
-	    directive,							\
-	    CODE_LABEL_NUMBER (target_label), base_label_no, pack);	\
-        }								\
-      /* APPLE LOCAL end 5837498 assembler expr for (L1-L2)/2 */	\
-      else if (!TARGET_THUMB)						\
-	asm_fprintf (file, "\tb\tL%d\n",				\
-			CODE_LABEL_NUMBER (target_label));		\
-      else if (TARGET_COMPACT_SWITCH_TABLES || flag_pic)		\
-	/* Let the assembler do the computation here; one case that	\
-	   uses is this is when there are asm's, which makes		\
-	   compile time computations unreliable. */			\
-	asm_fprintf (file, "\t%s\tL%d-L%d\n",				\
-	  directive,							\
-	  CODE_LABEL_NUMBER (target_label), base_label_no);		\
-      else								\
-	asm_fprintf (file, "\t%s\tL%d\n", directive,			\
-		     CODE_LABEL_NUMBER (target_label));			\
-    }									\
-  /* Pad to instruction boundary. */					\
-  vlen = (vlen + 1/*count*/) * size;					\
-  while (vlen % pack != 0)						\
-    {									\
-      asm_fprintf (file, "\t%s\t0 @ pad\n", directive);			\
-      vlen += size;							\
-    }									\
-} while (0)
+  arm_asm_output_addr_diff_vec (file, LABEL, BODY)
 
 /* This is identical to the default code when ASM_OUTPUT_ADDR_VEC is
    not defined; however, final_scan_insn() will not invoke that
@@ -2301,15 +2585,17 @@ arm_ifcvt_modify_multiple_tests (CE_INFO, BB, &TRUE_EXPR, &FALSE_EXPR)
    || (X) == arg_pointer_rtx)
 
 /* Moves to and from memory are quite expensive */
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 #define MEMORY_MOVE_COST(M, CLASS, IN)			\
-  (TARGET_ARM ? 10 :					\
+  (TARGET_32BIT ? 10 :					\
    ((GET_MODE_SIZE (M) < 4 ? 8 : 2 * GET_MODE_SIZE (M))	\
     * (CLASS == LO_REGS ? 1 : 2)))
 
 /* Try to generate sequences that don't involve branches, we can then use
    conditional instructions */
 #define BRANCH_COST \
-  (TARGET_ARM ? 4 : (optimize > 1 ? 1 : 0))
+  (TARGET_32BIT ? 4 : (optimize > 0 ? 2 : 0))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Position Independent Code.  */
 /* We decide which register to use based on the compilation options and
@@ -2400,7 +2686,10 @@ extern int making_const_table;
 #define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE)  ((VALUE) = 32, 1)
 
 #undef  ASM_APP_OFF
-#define ASM_APP_OFF (TARGET_THUMB ? "\t.code\t16\n" : "")
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+#define ASM_APP_OFF (TARGET_THUMB1 ? "\t.code\t16\n" : \
+		     TARGET_THUMB2 ? "\t.thumb\n" : "")
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Output a push or a pop instruction (only used when profiling).  */
 #define ASM_OUTPUT_REG_PUSH(STREAM, REGNO)		\
@@ -2424,16 +2713,29 @@ extern int making_const_table;
 	asm_fprintf (STREAM, "\tpop {%r}\n", REGNO);	\
     } while (0)
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
+/* Jump table alignment is explicit in ASM_OUTPUT_CASE_LABEL.  */
+#define ADDR_VEC_ALIGN(JUMPTABLE) 0
+
 /* This is how to output a label which precedes a jumptable.  Since
    Thumb instructions are 2 bytes, we may need explicit alignment here.  */
 #undef  ASM_OUTPUT_CASE_LABEL
-#define ASM_OUTPUT_CASE_LABEL(FILE, PREFIX, NUM, JUMPTABLE)	\
-  do								\
-    {								\
-      if (TARGET_THUMB)						\
-        ASM_OUTPUT_ALIGN (FILE, 2);				\
-      (*targetm.asm_out.internal_label) (FILE, PREFIX, NUM);	\
-    }								\
+#define ASM_OUTPUT_CASE_LABEL(FILE, PREFIX, NUM, JUMPTABLE)   \
+  do                  \
+    {                 \
+      if (TARGET_THUMB && GET_MODE (PATTERN (JUMPTABLE)) == SImode) \
+        ASM_OUTPUT_ALIGN (FILE, 2);         \
+      (*targetm.asm_out.internal_label) (FILE, PREFIX, NUM);    \
+    }                 \
+  while (0)
+
+/* Make sure subsequent insns are aligned after a TBB.  */
+#define ASM_OUTPUT_CASE_END(FILE, NUM, JUMPTABLE) \
+  do              \
+    {             \
+      if (GET_MODE (PATTERN (JUMPTABLE)) == QImode) \
+        ASM_OUTPUT_ALIGN (FILE, 1);     \
+    }             \
   while (0)
 
 #define ARM_DECLARE_FUNCTION_NAME(STREAM, NAME, DECL) 	\
@@ -2441,13 +2743,20 @@ extern int making_const_table;
     {							\
       if (TARGET_THUMB) 				\
         {						\
-          if (is_called_in_ARM_mode (DECL)      \
-			  || current_function_is_thunk)		\
-            fprintf (STREAM, "\t.code 32\n") ;		\
+          if (is_called_in_ARM_mode (DECL)		\
+	      || (TARGET_THUMB1 && !TARGET_THUMB1_ONLY	\
+		  && current_function_is_thunk))	\
+            {						\
+              fprintf (STREAM, "\t.align 2\n") ;	\
+              fprintf (STREAM, "\t.code 32\n") ;	\
+            }						\
           else						\
 /* APPLE LOCAL begin ARM thumb_func <symbol_name> */	\
 	    {						\
-	      fputs ("\t.code 16\n", STREAM);		\
+        if (TARGET_THUMB1) \
+  	      fputs ("\t.code 16\n", STREAM);		\
+        else                                            \
+          fputs ("\t.thumb\n", STREAM);     \
 	      fputs ("\t.thumb_func ", STREAM);		\
 	      if (TARGET_MACHO)				\
 		assemble_name (STREAM, (char *) NAME);	\
@@ -2459,6 +2768,7 @@ extern int making_const_table;
         arm_poke_function_name (STREAM, (char *) NAME);	\
     }							\
   while (0)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* For aliases of functions we use .thumb_set instead.  */
 #define ASM_OUTPUT_DEF_FROM_DECLS(FILE, DECL1, DECL2)		\
@@ -2495,20 +2805,26 @@ extern int making_const_table;
     }
 #endif
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 /* Only perform branch elimination (by making instructions conditional) if
-   we're optimizing.  Otherwise it's of no use anyway.  */
+   we're optimizing.  For Thumb-2 check if any IT instructions need
+   outputting.  */
 #define FINAL_PRESCAN_INSN(INSN, OPVEC, NOPERANDS)	\
   if (TARGET_ARM && optimize)				\
     arm_final_prescan_insn (INSN);			\
-  else if (TARGET_THUMB)				\
-    thumb_final_prescan_insn (INSN)
+  else if (TARGET_THUMB2)       \
+    thumb2_final_prescan_insn (INSN);     \
+  else if (TARGET_THUMB1)       \
+    thumb1_final_prescan_insn (INSN)
 
 #define PRINT_OPERAND_PUNCT_VALID_P(CODE)	\
-  (CODE == '@' || CODE == '|'			\
-   /* APPLE LOCAL ARM MACH assembler */		\
-   || CODE == '.'				\
-   || (TARGET_ARM   && (CODE == '?'))		\
+  (CODE == '@' || CODE == '|'	|| CODE == '.'  \
+   || CODE == '~' || CODE == '#' \
+   || CODE == '(' || CODE == ')'    \
+   || (TARGET_32BIT  && (CODE == '?'))		\
+   || (TARGET_THUMB2 && (CODE == '!'))    \
    || (TARGET_THUMB && (CODE == '_')))
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 /* Output an operand of an instruction.  */
 #define PRINT_OPERAND(STREAM, X, CODE)  \
@@ -2528,7 +2844,8 @@ extern int making_const_table;
     int is_minus = GET_CODE (X) == MINUS;				\
 									\
     if (GET_CODE (X) == REG)						\
-      asm_fprintf (STREAM, "[%r, #0]", REGNO (X));			\
+      /* APPLE LOCAL 6258536 Atomic builtins */				\
+      asm_fprintf (STREAM, "[%r]", REGNO (X));				\
     else if (GET_CODE (X) == PLUS || is_minus)				\
       {									\
 	rtx base = XEXP (X, 0);						\
@@ -2639,11 +2956,13 @@ extern int making_const_table;
     output_addr_const (STREAM, X);			\
 }
 
+/* APPLE LOCAL begin v7 support. Merge from mainline */
 #define PRINT_OPERAND_ADDRESS(STREAM, X)	\
-  if (TARGET_ARM)				\
+  if (TARGET_32BIT)				\
     ARM_PRINT_OPERAND_ADDRESS (STREAM, X)	\
   else						\
     THUMB_PRINT_OPERAND_ADDRESS (STREAM, X)
+/* APPLE LOCAL end v7 support. Merge from mainline */
 
 #define OUTPUT_ADDR_CONST_EXTRA(file, x, fail)		\
   if (arm_output_addr_const_extra (file, x) == FALSE)	\
@@ -2764,6 +3083,11 @@ extern int making_const_table;
   } while (0)
 /* APPLE LOCAL end 6186914 */
 
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+/* Neon defines builtins from ARM_BUILTIN_MAX upwards, though they don't have
+   symbolic names defined here (which would require too much duplication).
+   FIXME?  */
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 enum arm_builtins
 {
   ARM_BUILTIN_GETWCX,
@@ -2928,12 +3252,182 @@ enum arm_builtins
 
   ARM_BUILTIN_THREAD_POINTER,
 
-  ARM_BUILTIN_MAX
+/* APPLE LOCAL begin v7 support. Merge from Codesourcery */
+  ARM_BUILTIN_NEON_BASE,
+
+  ARM_BUILTIN_MAX = ARM_BUILTIN_NEON_BASE  /* FIXME: Wrong!  */
+/* APPLE LOCAL end v7 support. Merge from Codesourcery */
 };
 
 /* LLVM LOCAL begin */
+/* Define a static enumeration of the NEON builtins to be used when
+   converting to LLVM intrinsics.  These names are derived from the
+   neon_builtin_data table in arm.c and should be kept in sync with that.  */
+
+enum neon_builtins
+{
+  NEON_BUILTIN_vadd,
+  NEON_BUILTIN_vaddl,
+  NEON_BUILTIN_vaddw,
+  NEON_BUILTIN_vhadd,
+  NEON_BUILTIN_vqadd,
+  NEON_BUILTIN_vaddhn,
+  NEON_BUILTIN_vmul,
+  NEON_BUILTIN_vmla,
+  NEON_BUILTIN_vmlal,
+  NEON_BUILTIN_vmls,
+  NEON_BUILTIN_vmlsl,
+  NEON_BUILTIN_vqdmulh,
+  NEON_BUILTIN_vqdmlal,
+  NEON_BUILTIN_vqdmlsl,
+  NEON_BUILTIN_vmull,
+  NEON_BUILTIN_vmull_n,
+  NEON_BUILTIN_vmull_lane,
+  NEON_BUILTIN_vqdmull_n,
+  NEON_BUILTIN_vqdmull_lane,
+  NEON_BUILTIN_vqdmulh_n,
+  NEON_BUILTIN_vqdmulh_lane,
+  NEON_BUILTIN_vqdmull,
+  NEON_BUILTIN_vshl,
+  NEON_BUILTIN_vqshl,
+  NEON_BUILTIN_vshr_n,
+  NEON_BUILTIN_vshrn_n,
+  NEON_BUILTIN_vqshrn_n,
+  NEON_BUILTIN_vqshrun_n,
+  NEON_BUILTIN_vshl_n,
+  NEON_BUILTIN_vqshl_n,
+  NEON_BUILTIN_vqshlu_n,
+  NEON_BUILTIN_vshll_n,
+  NEON_BUILTIN_vsra_n,
+  NEON_BUILTIN_vsub,
+  NEON_BUILTIN_vsubl,
+  NEON_BUILTIN_vsubw,
+  NEON_BUILTIN_vqsub,
+  NEON_BUILTIN_vhsub,
+  NEON_BUILTIN_vsubhn,
+  NEON_BUILTIN_vceq,
+  NEON_BUILTIN_vcge,
+  NEON_BUILTIN_vcgt,
+  NEON_BUILTIN_vcage,
+  NEON_BUILTIN_vcagt,
+  NEON_BUILTIN_vtst,
+  NEON_BUILTIN_vabd,
+  NEON_BUILTIN_vabdl,
+  NEON_BUILTIN_vaba,
+  NEON_BUILTIN_vabal,
+  NEON_BUILTIN_vmax,
+  NEON_BUILTIN_vmin,
+  NEON_BUILTIN_vpadd,
+  NEON_BUILTIN_vpaddl,
+  NEON_BUILTIN_vpadal,
+  NEON_BUILTIN_vpmax,
+  NEON_BUILTIN_vpmin,
+  NEON_BUILTIN_vrecps,
+  NEON_BUILTIN_vrsqrts,
+  NEON_BUILTIN_vsri_n,
+  NEON_BUILTIN_vsli_n,
+  NEON_BUILTIN_vabs,
+  NEON_BUILTIN_vqabs,
+  NEON_BUILTIN_vneg,
+  NEON_BUILTIN_vqneg,
+  NEON_BUILTIN_vcls,
+  NEON_BUILTIN_vclz,
+  NEON_BUILTIN_vcnt,
+  NEON_BUILTIN_vrecpe,
+  NEON_BUILTIN_vrsqrte,
+  NEON_BUILTIN_vmvn,
+  NEON_BUILTIN_vget_lane,
+  NEON_BUILTIN_vset_lane,
+  NEON_BUILTIN_vcreate,
+  NEON_BUILTIN_vdup_n,
+  NEON_BUILTIN_vdup_lane,
+  NEON_BUILTIN_vcombine,
+  NEON_BUILTIN_vget_high,
+  NEON_BUILTIN_vget_low,
+  NEON_BUILTIN_vmovn,
+  NEON_BUILTIN_vqmovn,
+  NEON_BUILTIN_vqmovun,
+  NEON_BUILTIN_vmovl,
+  NEON_BUILTIN_vmul_lane,
+  NEON_BUILTIN_vmla_lane,
+  NEON_BUILTIN_vmlal_lane,
+  NEON_BUILTIN_vqdmlal_lane,
+  NEON_BUILTIN_vmls_lane,
+  NEON_BUILTIN_vmlsl_lane,
+  NEON_BUILTIN_vqdmlsl_lane,
+  NEON_BUILTIN_vmul_n,
+  NEON_BUILTIN_vmla_n,
+  NEON_BUILTIN_vmlal_n,
+  NEON_BUILTIN_vqdmlal_n,
+  NEON_BUILTIN_vmls_n,
+  NEON_BUILTIN_vmlsl_n,
+  NEON_BUILTIN_vqdmlsl_n,
+  NEON_BUILTIN_vext,
+  NEON_BUILTIN_vrev64,
+  NEON_BUILTIN_vrev32,
+  NEON_BUILTIN_vrev16,
+  NEON_BUILTIN_vcvt,
+  NEON_BUILTIN_vcvt_n,
+  NEON_BUILTIN_vbsl,
+  NEON_BUILTIN_vtbl1,
+  NEON_BUILTIN_vtbl2,
+  NEON_BUILTIN_vtbl3,
+  NEON_BUILTIN_vtbl4,
+  NEON_BUILTIN_vtbx1,
+  NEON_BUILTIN_vtbx2,
+  NEON_BUILTIN_vtbx3,
+  NEON_BUILTIN_vtbx4,
+  NEON_BUILTIN_vtrn,
+  NEON_BUILTIN_vzip,
+  NEON_BUILTIN_vuzp,
+  NEON_BUILTIN_vreinterpretv8qi,
+  NEON_BUILTIN_vreinterpretv4hi,
+  NEON_BUILTIN_vreinterpretv2si,
+  NEON_BUILTIN_vreinterpretv2sf,
+  /* LLVM LOCAL begin */
+  NEON_BUILTIN_vreinterpretv1di,
+  /* LLVM LOCAL end */
+  NEON_BUILTIN_vreinterpretv16qi,
+  NEON_BUILTIN_vreinterpretv8hi,
+  NEON_BUILTIN_vreinterpretv4si,
+  NEON_BUILTIN_vreinterpretv4sf,
+  NEON_BUILTIN_vreinterpretv2di,
+  NEON_BUILTIN_vld1,
+  NEON_BUILTIN_vld1_lane,
+  NEON_BUILTIN_vld1_dup,
+  NEON_BUILTIN_vst1,
+  NEON_BUILTIN_vst1_lane,
+  NEON_BUILTIN_vld2,
+  NEON_BUILTIN_vld2_lane,
+  NEON_BUILTIN_vld2_dup,
+  NEON_BUILTIN_vst2,
+  NEON_BUILTIN_vst2_lane,
+  NEON_BUILTIN_vld3,
+  NEON_BUILTIN_vld3_lane,
+  NEON_BUILTIN_vld3_dup,
+  NEON_BUILTIN_vst3,
+  NEON_BUILTIN_vst3_lane,
+  NEON_BUILTIN_vld4,
+  NEON_BUILTIN_vld4_lane,
+  NEON_BUILTIN_vld4_dup,
+  NEON_BUILTIN_vst4,
+  NEON_BUILTIN_vst4_lane,
+  NEON_BUILTIN_vand,
+  NEON_BUILTIN_vorr,
+  NEON_BUILTIN_veor,
+  NEON_BUILTIN_vbic,
+  NEON_BUILTIN_vorn,
+  NEON_BUILTIN_MAX
+};
+
 #ifdef ENABLE_LLVM
 #define LLVM_TARGET_INTRINSIC_PREFIX "arm"
+
+/* LLVM_TARGET_NAME - This specifies the name of the target, which correlates to
+ * the llvm::InitializeXXXTarget() function.
+ */
+#define LLVM_TARGET_NAME ARM
+
 
 /* Turn -march=xx into a CPU type.
  */
@@ -2976,32 +3470,66 @@ enum arm_builtins
     case arm1176jzfs:   F.setCPU("arm1176jzf-s"); break;\
     case mpcorenovfp:   F.setCPU("mpcorenovfp"); break;\
     case mpcore:        F.setCPU("mpcore"); break;\
-    default: \
+    case arm1156t2s:    F.setCPU("arm1156t2-s"); break;	\
+    case arm1156t2fs:   F.setCPU("arm1156t2f-s"); break; \
+    case cortexa8:      F.setCPU("cortex-a8"); break; \
+    case cortexa9:      F.setCPU("cortex-a9"); break; \
+    case cortexr4:      F.setCPU("cortex-r4"); break; \
+    case cortexm3:      F.setCPU("cortex-m3"); break; \
+    default:						\
       F.setCPU("arm7tdmi"); \
       break; \
     } \
+    if (TARGET_VFP3)						\
+      F.AddFeature("vfp3");					\
+    else							\
+      F.AddFeature("vfp3", false);				\
+    if (TARGET_NEON)						\
+      F.AddFeature("neon");					\
+    else							\
+      F.AddFeature("neon", false);				\
   }
 
 /* Encode arm / thumb modes and arm subversion number in the triplet. e.g.
  * armv6-apple-darwin, thumbv5-apple-darwin. FIXME: Replace thumb triplets
  * with function notes.
  */
-#define LLVM_OVERRIDE_TARGET_ARCH()                                       \
-  (TARGET_THUMB                                                           \
-   ? (arm_arch6                                                           \
-      ? "thumbv6" : (arm_arch5e                                           \
-                     ? "thumbv5e" : (arm_arch5                            \
-                                     ? "thumbv5" : (arm_arch4t            \
-                                                    ? "thumbv4t" : "")))) \
-   : (arm_arch6                                                           \
-      ? "armv6"   : (arm_arch5e                                           \
-                     ? "armv5e"   : (arm_arch5                            \
-                                     ? "armv5"   : (arm_arch4t            \
-                                                    ? "armv4t" : "")))))
+#define LLVM_OVERRIDE_TARGET_ARCH()                                        \
+  (TARGET_THUMB                                                            \
+   ? (arm_arch7a                                                           \
+      ? "thumbv7"                                                          \
+      : (arm_arch_thumb2                                                   \
+         ? "thumbv6t2"                                                     \
+         : (arm_arch6                                                      \
+            ? "thumbv6"                                                    \
+            : (arm_arch5e                                                  \
+               ? "thumbv5e"                                                \
+               : (arm_arch5                                                \
+                  ? "thumbv5"                                              \
+                  : (arm_arch4t                                            \
+                     ? "thumbv4t" : ""))))))                               \
+   : (arm_arch7a                                                           \
+      ? "armv7"                                                            \
+      : (arm_arch_thumb2                                                   \
+         ? "armv6t2"                                                       \
+         : (arm_arch6                                                      \
+            ? "armv6"                                                      \
+            : (arm_arch5e                                                  \
+               ? "armv5e"                                                  \
+               : (arm_arch5                                                \
+                  ? "armv5"                                                \
+                  : (arm_arch4t                                            \
+                     ? "armv4t"                                            \
+                     : (arm_arch4                                          \
+                        ? "armv4" : ""))))))))
 
 #define LLVM_SET_MACHINE_OPTIONS(argvec)               \
   if (TARGET_SOFT_FLOAT)                               \
-    argvec.push_back("-soft-float");
+    argvec.push_back("-soft-float");                   \
+  if (TARGET_HARD_FLOAT_ABI)                           \
+    argvec.push_back("-float-abi=hard");               \
+  if (flag_mkernel || flag_apple_kext) \
+    argvec.push_back("-arm-long-calls");
 
 /* Doing struct copy by partial-word loads and stores is not a good idea on ARM. */
 #define TARGET_LLVM_MIN_BYTES_COPY_BY_MEMCPY 4
@@ -3013,7 +3541,26 @@ enum arm_builtins
   else if ((ESCAPED_CHAR) == '@') {       		\
     (RESULT) += ASM_COMMENT_START;                      \
   }
-#endif
+
+/* LLVM_TARGET_INTRINSIC_LOWER - To handle builtins, we want to expand the
+   invocation into normal LLVM code.  If the target can handle the builtin, this
+   macro should call the target TreeToLLVM::TargetIntrinsicLower method and
+   return true.  This macro is invoked from a method in the TreeToLLVM class. */
+#define LLVM_TARGET_INTRINSIC_LOWER(EXP, BUILTIN_CODE, DESTLOC, RESULT,       \
+                                    DESTTY, OPS)                              \
+        TargetIntrinsicLower(EXP, BUILTIN_CODE, DESTLOC, RESULT, DESTTY, OPS);
+
+/* LLVM_GET_REG_NAME - The registers known to llvm as "r10", "r11", and "r12"
+   may have different names in GCC.  Register "r12" is called "ip", and on
+   non-Darwin OSs, "r10" is "sl" and "r11" is "fp".  Translate those names,
+   and use the default register names for everything else.  */
+#define LLVM_GET_REG_NAME(REG_NAME, REG_NUM) \
+  ((REG_NUM) == 10 ? "r10" \
+   : (REG_NUM) == 11 ? "r11" \
+   : (REG_NUM) == 12 ? "r12" \
+   : reg_names[REG_NUM])
+
+#endif /* ENABLE_LLVM */
 /* LLVM LOCAL end */
 
 #endif /* ! GCC_ARM_H */

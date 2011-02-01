@@ -69,9 +69,9 @@ DEST_DIR="$5"
 SYM_DIR="$6"
 
 # LLVM LOCAL begin
-# The seventh parameter is true/false indicating whether LLVM should be enabled
-# or not.
-ENABLE_LLVM="$7"
+# The seventh parameter is a yes/no that indicates whether libLTO.dylib
+# should be installed from LLVMCORE_PATH.
+INSTALL_LIBLTO="$7"
 
 # The eighth parameter is a yes/no that indicates whether assertions should be
 # enabled in the LLVM libs/tools.
@@ -86,8 +86,7 @@ LLVM_SUBMIT_VERSION="${10}"
 # The eleventh parameter is the subversion number of the submission, e.g. 03.
 LLVM_SUBMIT_SUBVERSION="${11}"
 
-# LLVM_BIN_DIR - This is the place where llvm-gcc/llvm-g++ symlinks get installed.
-LLVM_BIN_DIR=$DEST_ROOT/../bin
+ENABLE_LLVM=true
 
 # LLVM LOCAL end
 
@@ -119,6 +118,10 @@ fi
 NON_ARM_CONFIGFLAGS="--with-gxx-include-dir=/usr/include/c++/$LIBSTDCXX_VERSION"
 # LLVM LOCAL end
 
+# Build against the MacOSX10.5 SDK for PowerPC.
+PPC_SYSROOT=/Developer/SDKs/MacOSX10.5.sdk
+PPC_CONFIGFLAGS="$NON_ARM_CONFIGFLAGS --with-build-sysroot=\"$PPC_SYSROOT\""
+
 DARWIN_VERS=`uname -r | sed 's/\..*//'`
 echo DARWIN_VERS = $DARWIN_VERS
 
@@ -126,57 +129,58 @@ echo DARWIN_VERS = $DARWIN_VERS
 ARM_LIBSTDCXX_VERSION=4.2.1
 ARM_CONFIGFLAGS="--with-gxx-include-dir=/usr/include/c++/$ARM_LIBSTDCXX_VERSION"
 
-ARM_PLATFORM=/Developer/Platforms/iPhoneOS.platform
-ARM_IPHONE_SDK=iPhoneOS${IPHONEOS_DEPLOYMENT_TARGET}.Internal.sdk
-ARM_EXTRA_SDK=/Developer/SDKs/Extra
+# When building for a non-embedded train, ARM defaults to MacOSX, just like
+# x86 and ppc.
+if [ "x$RC_TARGET_CONFIG" = "xiPhone" ]; then
+  ARM_DARWIN_TARGET_IPHONEOS="YES"
+fi
 
-# Check if the build system is running Leopard or earlier.  If the Legacy PDK
-# is not installed, the toolchain in / will not support ARM.  Use the iPhone
-# platform directory instead.
-if [ $DARWIN_VERS -le 9 -a ! -d $ARM_EXTRA_SDK ]; then
-  ARM_TOOLROOT=$ARM_PLATFORM
+if [ -n "$ARM_SDK" ]; then
+  ARM_PLATFORM=`xcodebuild -version -sdk $ARM_SDK PlatformPath`
+  ARM_SYSROOT=`xcodebuild -version -sdk $ARM_SDK Path`
 else
-  ARM_TOOLROOT=/
+  # Use bootstrap SDK if it is available.
+  # FIXME: This can be removed once all builds set ARM_SDK.
+  if [ -d /Developer/SDKs/Extra ]; then
+    ARM_SYSROOT=/Developer/SDKs/Extra
+  else
+    ARM_SYSROOT=/
+  fi
+  ARM_PLATFORM=/
+fi
+ARM_CONFIGFLAGS="$ARM_CONFIGFLAGS --with-build-sysroot=\"$ARM_SYSROOT\""
+
+# If it's being built for iPhoneOS, assume the llvmCore bits are under
+# iPhoneOS platform directory.
+if [ "x$RC_ProjectName" = "xllvmgcc42_Embedded" ]; then
+  LLVMCORE_PATH="${ARM_PLATFORM}${LLVMCORE_PATH}"
+  DEST_ROOT="${ARM_PLATFORM}${DEST_ROOT}"
 fi
 
-# ARM may require a sysroot option.
-ARM_SYSROOT=$ARM_EXTRA_SDK
-# If the default sysroot does not exist, try a different location.
-if [ ! -d $ARM_SYSROOT ]; then
-  ARM_SYSROOT=$ARM_PLATFORM/Developer/SDKs/$ARM_IPHONE_SDK
-fi
-
-# Split the MACOSX_DEPLOYMENT_TARGET into major/minor versions.
-if [ -z "$MACOSX_DEPLOYMENT_TARGET" ]; then
-  # Anything 10.5 or earlier is treated the same below.
-  MACOSX_DEPLOYMENT_MAJOR=10
-  MACOSX_DEPLOYMENT_MINOR=5
-else
-  MACOSX_DEPLOYMENT_MAJOR=`echo $MACOSX_DEPLOYMENT_TARGET | sed 's/\..*//'`
-  MACOSX_DEPLOYMENT_MINOR=`echo $MACOSX_DEPLOYMENT_TARGET | sed 's/[0-9]*\.\([0-9]*\).*/\1/'`
-fi
-if [ $MACOSX_DEPLOYMENT_MAJOR -eq 10 -a \
-     $MACOSX_DEPLOYMENT_MINOR -le 5 ]; then
-  ARM_CONFIGFLAGS="$ARM_CONFIGFLAGS --with-sysroot=\"$ARM_SYSROOT\""
-else
-  ARM_SYSROOT=/
-fi
-
-# If building an ARM target, check that the required directories exist.
+# If building an ARM target, check that the required directories exist
+# and query the libSystem arm slices to determine which multilibs we should
+# build.
 if echo $TARGETS | grep arm; then
   if [ ! -d $ARM_SYSROOT ]; then
     echo "Error: cannot find ARM SDK to build ARM target"
     exit 1
   fi
-  if [ ! -d $ARM_TOOLROOT ]; then
-    echo "Error: $ARM_TOOLROOT directory is not installed"
+  if [ "x$ARM_MULTILIB_ARCHS" = "x" ] ; then
+    ARM_MULTILIB_ARCHS=`/usr/bin/lipo -info $ARM_SYSROOT/usr/lib/libSystem.dylib | cut -d':' -f 3 | sed -e 's/x86_64//' -e 's/i386//' -e 's/ppc7400//' -e 's/ppc64//' -e 's/^ *//' -e 's/ $//'`
+  fi;
+  if [ "x$ARM_MULTILIB_ARCHS" == "x" ] ; then
+    echo "Error: missing ARM slices in $ARM_SYSROOT"
     exit 1
+  else
+    export ARM_MULTILIB_ARCHS
   fi
 fi
 # APPLE LOCAL end ARM
 
+# LLVM LOCAL begin
 # If the user has CC set in their environment unset it now
 unset CC
+# LLVM LOCAL end
 
 ########################################
 # Run the build.
@@ -256,15 +260,27 @@ if [ "$ENABLE_LLVM" == true ]; then
 fi
 # LLVM LOCAL end
 
+# If the user has set CC or CXX, respect their wishes.  If not,
+# compile with LLVM-GCC/LLVM-G++ if available; if LLVM is not
+# available, fall back to usual GCC/G++ default.
+savedPATH=$PATH ; PATH="/Developer/usr/bin:$PATH"
+XTMPCC=$(which llvm-gcc)
+if [ x$CC  = x -a x$XTMPCC != x ] ; then export CC=$XTMPCC  forcedCC=1  ; fi
+XTMPCC=$(which llvm-g++)
+if [ x$CXX = x -a x$XTMPCC != x ] ; then export CXX=$XTMPCC forcedCXX=1 ; fi
+PATH=$savedPATH
+unset XTMPCC savedPATH
+
 # Build the native GCC.  Do this even if the user didn't ask for it
 # because it'll be needed for the bootstrap.
 mkdir -p $DIR/obj-$BUILD-$BUILD $DIR/dst-$BUILD-$BUILD || exit 1
 cd $DIR/obj-$BUILD-$BUILD || exit 1
 if [ \! -f Makefile ]; then
- $SRC_DIR/configure $bootstrap $CONFIGFLAGS \
-   $NON_ARM_CONFIGFLAGS \
-   --host=$BUILD-apple-darwin$DARWIN_VERS --target=$BUILD-apple-darwin$DARWIN_VERS || exit 1
+ $SRC_DIR/configure $bootstrap $CONFIGFLAGS $NON_ARM_CONFIGFLAGS \
+   --host=$BUILD-apple-darwin$DARWIN_VERS \
+   --target=$BUILD-apple-darwin$DARWIN_VERS || exit 1
 fi
+
 # Unset RC_DEBUG_OPTIONS because it causes the bootstrap to fail.
 # Also keep unset for cross compilers so that the cross built libraries are
 # comparable to the native built libraries.
@@ -273,6 +289,11 @@ make $MAKEFLAGS CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
 make $MAKEFLAGS html CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
 make $MAKEFLAGS DESTDIR=$DIR/dst-$BUILD-$BUILD install-gcc install-target \
   CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
+
+# Now that we've built a native compiler, un-kludge these so that
+# subsequent cross-hosted compilers can be found normally.
+if [ x$forcedCC  != x ] ; then unset CC  forcedCC  ; fi
+if [ x$forcedCXX != x ] ; then unset CXX forcedCXX ; fi
 
 # Add the compiler we just built to the path, giving it appropriate names.
 # LLVM LOCAL begin Support for non /usr $DEST_ROOT
@@ -289,36 +310,37 @@ PATH=$DIR/dst-$BUILD-$BUILD$DEST_ROOT/bin:$PATH
 rm -rf $DIR/bin || exit 1
 mkdir $DIR/bin || exit 1
 for prog in ar nm ranlib strip lipo ld ; do
-  for t in `echo $TARGETS $HOSTS | sort -u`; do
+  for t in `echo $TARGETS $HOSTS | tr ' ' '\n' | sort -u`; do
     P=$DIR/bin/${t}-apple-darwin$DARWIN_VERS-${prog}
-    # APPLE LOCAL begin toolroot
-    if [ $t = "arm" ]; then
-      toolroot=$ARM_TOOLROOT
+    # Use the specified ARM_SDK for arm, but otherwise force the SDK to / for
+    # now, since SDKROOT may be set to an SDK that does not include support
+    # for all the targets being built (i.e., ppc).
+    if [ "$t" = "arm" -a -n "$ARM_SDK" ]; then
+      sdkoption="-sdk $ARM_SDK"
     else
-      toolroot=
+      sdkoption="-sdk /"
     fi
-    # APPLE LOCAL end toolroot
+    progpath=`xcrun $sdkoption -find $prog`
     echo '#!/bin/sh' > $P || exit 1
-    # APPLE LOCAL insert toolroot below
-    echo 'exec '${toolroot}'/usr/bin/'${prog}' "$@"' >> $P || exit 1
+    echo 'exec '${progpath}' "$@"' >> $P || exit 1
     chmod a+x $P || exit 1
   done
 done
-for t in `echo $1 $2 | sort -u`; do
+# The "as" script adds a default "-arch" option.  Iterate over the lists of
+# untranslated HOSTS and TARGETS in $1 and $2 so those names can be used as
+# the arguments for "-arch" in the scripts.
+for t in `echo $1 $2 | tr ' ' '\n' | sort -u`; do
   gt=`echo $t | $TRANSLATE_ARCH`
   P=$DIR/bin/${gt}-apple-darwin$DARWIN_VERS-as
-  # APPLE LOCAL begin toolroot
-  if [ $gt = "arm" ]; then
-    toolroot=$ARM_TOOLROOT
+  if [ "$gt" = "arm" -a -n "$ARM_SDK" ]; then
+    sdkoption="-sdk $ARM_SDK"
   else
-    toolroot=
+    sdkoption="-sdk /"
   fi
-  # APPLE LOCAL end toolroot
+  progpath=`xcrun $sdkoption -find as`
   echo '#!/bin/sh' > $P || exit 1
-
-  # APPLE LOCAL insert toolroot below
-  echo 'for a; do case $a in -arch) exec '${toolroot}'/usr/bin/as "$@";;  esac; done' >> $P || exit 1
-  echo 'exec '${toolroot}'/usr/bin/as -arch '${t}' "$@"' >> $P || exit 1
+  echo 'for a; do case $a in -arch) exec '${progpath}' "$@";;  esac; done' >> $P || exit 1
+  echo 'exec '${progpath}' -arch '${t}' "$@"' >> $P || exit 1
   chmod a+x $P || exit 1
 done
 PATH=$DIR/bin:$PATH
@@ -339,15 +361,37 @@ for t in $CROSS_TARGETS ; do
    cd $DIR/obj-$BUILD-$t || exit 1
    if [ \! -f Makefile ]; then
     # APPLE LOCAL begin ARM ARM_CONFIGFLAGS
-    $SRC_DIR/configure $CONFIGFLAGS --enable-werror-always \
-     `if [ $t = 'arm' ] ; then echo $ARM_CONFIGFLAGS ; else echo $NON_ARM_CONFIGFLAGS ; fi` \
+    T_CONFIGFLAGS="$CONFIGFLAGS --enable-werror-always \
       --program-prefix=$t-apple-darwin$DARWIN_VERS- \
-      --host=$BUILD-apple-darwin$DARWIN_VERS --target=$t-apple-darwin$DARWIN_VERS || exit 1
+      --host=$BUILD-apple-darwin$DARWIN_VERS \
+      --target=$t-apple-darwin$DARWIN_VERS"
+    if [ $t = 'arm' ] ; then
+      # Explicitly set AS_FOR_TARGET and LD_FOR_TARGET to avoid picking up
+      # older versions from the gcc installed in /usr.  Radar 7230843.
+      AS_FOR_TARGET=$DIR/bin/${t}-apple-darwin$DARWIN_VERS-as \
+      LD_FOR_TARGET=$DIR/bin/${t}-apple-darwin$DARWIN_VERS-ld \
+      $SRC_DIR/configure $T_CONFIGFLAGS $ARM_CONFIGFLAGS || exit 1
+    elif [ $t = 'powerpc' ] ; then
+      $SRC_DIR/configure $T_CONFIGFLAGS $PPC_CONFIGFLAGS || exit 1
+    else
+      $SRC_DIR/configure $T_CONFIGFLAGS $NON_ARM_CONFIGFLAGS || exit 1
+    fi
     # APPLE LOCAL end ARM ARM_CONFIGFLAGS
    fi
-   make $MAKEFLAGS all CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
+   if [ $t = 'arm' ] ; then
+     if [ $ARM_DARWIN_TARGET_IPHONEOS = 'YES' ] ; then
+       DEFAULT_TARGET="-DDEFAULT_TARGET_OS=DARWIN_VERSION_IPHONEOS"
+     else
+        DEFAULT_TARGET="-DDEFAULT_TARGET_OS=DARWIN_VERSION_MACOSX"
+     fi
+   else
+     DEFAULT_TARGET=""
+   fi
+   make $MAKEFLAGS all CFLAGS="$CFLAGS $DEFAULT_TARGET" \
+     CXXFLAGS="$CFLAGS $DEFAULT_TARGET" || exit 1
    make $MAKEFLAGS DESTDIR=$DIR/dst-$BUILD-$t install-gcc install-target \
-     CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
+     CFLAGS="$CFLAGS $DEFAULT_TARGET" \
+     CXXFLAGS="$CFLAGS $DEFAULT_TARGET" || exit 1
 
    # Add the compiler we just built to the path.
    # LLVM LOCAL Support for non /usr $DEST_ROOT
@@ -385,12 +429,34 @@ for h in $HOSTS ; do
 
       if [ \! -f Makefile ]; then
 	# APPLE LOCAL begin ARM ARM_CONFIGFLAGS
-        $SRC_DIR/configure $CONFIGFLAGS \
-	  `if [ $t = 'arm' ] && [ $h != 'arm' ] ; then echo $ARM_CONFIGFLAGS ; else echo $NON_ARM_CONFIGFLAGS ; fi` \
-          --program-prefix=$pp \
-          --host=$h-apple-darwin$DARWIN_VERS --target=$t-apple-darwin$DARWIN_VERS || exit 1
+        T_CONFIGFLAGS="$CONFIGFLAGS --program-prefix=$pp \
+          --host=$h-apple-darwin$DARWIN_VERS \
+          --target=$t-apple-darwin$DARWIN_VERS"
+	if [ $t = 'arm' ] && [ $h != 'arm' ] ; then
+          T_CONFIGFLAGS="$T_CONFIGFLAGS $ARM_CONFIGFLAGS"
+	elif [ $t = 'powerpc' ] && [ $h != 'powerpc' ] ; then
+          T_CONFIGFLAGS="$T_CONFIGFLAGS $PPC_CONFIGFLAGS"
+        else
+          T_CONFIGFLAGS="$T_CONFIGFLAGS $NON_ARM_CONFIGFLAGS"
+        fi
+        $SRC_DIR/configure $T_CONFIGFLAGS || exit 1
 	# APPLE LOCAL end ARM ARM_CONFIGFLAGS
       fi
+
+      # For ARM, we need to make sure it picks up the correct versions
+      # of the linker and cctools.
+      if [ $t = 'arm' ] ; then
+        if [ -n "$ARM_SDK" ]; then
+          sdkoption="-sdk $ARM_SDK"
+        else
+          sdkoption="-sdk /"
+        fi
+        progpath=`xcrun $sdkoption -find ld`
+        comppath=`dirname $progpath`
+        ORIG_COMPILER_PATH=$COMPILER_PATH
+        export COMPILER_PATH=$comppath:$COMPILER_PATH
+      fi
+
       if [ $h = $t ] ; then
 	  make $MAKEFLAGS all CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
 	  make $MAKEFLAGS DESTDIR=$DIR/dst-$h-$t install-gcc install-target \
@@ -399,6 +465,11 @@ for h in $HOSTS ; do
 	  make $MAKEFLAGS all-gcc CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
 	  make $MAKEFLAGS DESTDIR=$DIR/dst-$h-$t install-gcc \
 	      CFLAGS="$CFLAGS" CXXFLAGS="$CFLAGS" || exit 1
+      fi
+
+      if [ $t = 'arm' ] ; then
+        export COMPILER_PATH=$ORIG_COMPILER_PATH
+        unset ORIG_COMPILER_PATH
       fi
     done
   fi
@@ -515,21 +586,8 @@ for t in $LIBGOMP_TARGETS ; do
 done
 # APPLE LOCAL end native compiler support
 
-if [ $BUILD_CXX -eq 1 ]; then
-for t in $TARGETS ; do
-    if [ "$t" == 'arm' ] ; then
-        cp -p $ARM_SYSROOT/usr/lib/libstdc++.6.dylib \
-            .$DEST_ROOT/lib/gcc/$t-apple-darwin$DARWIN_VERS/$VERS/libstdc++.dylib \
-            || exit 1
-    else
-        cp -p /usr/lib/libstdc++.6.dylib \
-            .$DEST_ROOT/lib/gcc/$t-apple-darwin$DARWIN_VERS/$VERS/libstdc++.dylib \
-            || exit 1
-    fi
-# LLVM LOCAL
-#  strip -x -c .$DEST_ROOT/lib/gcc/$t-apple-darwin$DARWIN_VERS/$VERS/libstdc++.dylib || exit 1
-done
-fi
+# LLVM LOCAL remove libstdc++ copying
+
 
 # include
 HEADERPATH=$DEST_ROOT/include/gcc/darwin/$MAJ_VERS
@@ -575,11 +633,17 @@ done
 # LLVM LOCAL begin
 # Compress manpages
 gzip -f $MDIR/*
-mkdir -p $DEST_DIR/Developer/usr/share/man/man1
-cp $ORIG_SRC_DIR/gcc/doc/llvm-gcc.1 $DEST_DIR/Developer/usr/share/man/man1/llvm-gcc.1
-cp $ORIG_SRC_DIR/gcc/doc/llvm-gcc.1 $DEST_DIR/Developer/usr/share/man/man1/llvm-g++.1
-gzip -f $DEST_DIR/Developer/usr/share/man/man1/llvm-gcc.1
-gzip -f $DEST_DIR/Developer/usr/share/man/man1/llvm-g++.1
+
+if [ "x$RC_ProjectName" = "xllvmgcc42_Embedded" ]; then
+MAN1_DIR=${DEST_DIR}${ARM_PLATFORM}/Developer/usr/share/man/man1
+else
+MAN1_DIR=$DEST_DIR/Developer/usr/share/man/man1
+fi
+mkdir -p ${MAN1_DIR}
+cp $ORIG_SRC_DIR/gcc/doc/llvm-gcc.1 ${MAN1_DIR}/llvm-gcc.1
+cp $ORIG_SRC_DIR/gcc/doc/llvm-gcc.1 ${MAN1_DIR}/llvm-g++.1
+gzip -f ${MAN1_DIR}/llvm-gcc.1
+gzip -f ${MAN1_DIR}/llvm-g++.1
 # LLVM LOCAL end
 
 # Build driver-driver using fully-named drivers
@@ -665,6 +729,10 @@ fi
 
 # LLVM LOCAL begin
 # Set up the llvm-gcc/llvm-g++ symlinks.
+
+# LLVM_BIN_DIR - This is the place where llvm-gcc/llvm-g++ symlinks get installed.
+LLVM_BIN_DIR=$DEST_ROOT/../bin
+
 mkdir -p $DEST_DIR$LLVM_BIN_DIR
 cd $DEST_DIR$LLVM_BIN_DIR
 ln -s -f ../llvm-gcc-$MAJ_VERS/bin/llvm-gcc-$MAJ_VERS llvm-gcc-$MAJ_VERS || exit 1
@@ -690,12 +758,47 @@ for t in $TARGETS ; do
     ln -s ../../libllvmgcc.dylib
 done
 
-if [ "x$LLVM_BUILT_ROOTS" == "x" ]; then
-    mkdir -p $DEST_DIR/usr/bin
-    cd $DEST_DIR/usr/bin
-    ln -s /Developer/usr/bin/llvm-gcc-4.2 llvm-gcc-4.2
-    ln -s /Developer/usr/bin/llvm-g++-4.2 llvm-g++-4.2
+if [ "x$RC_ProjectName" == "xllvmgcc42_Embedded" ]; then
+    if [ "x$LLVM_BUILT_ROOTS" == "x" ]; then
+        mkdir -p $DEST_DIR${ARM_PLATFORM}/usr/bin
+        cd $DEST_DIR${ARM_PLATFORM}/usr/bin
+        ln -s ${ARM_PLATFORM}/Developer/usr/bin/llvm-gcc-4.2 llvm-gcc-4.2
+        ln -s ${ARM_PLATFORM}/Developer/usr/bin/llvm-g++-4.2 llvm-g++-4.2
+    fi
+else
+    if [ "x$LLVM_BUILT_ROOTS" == "x" ]; then
+        mkdir -p $DEST_DIR/usr/bin
+        cd $DEST_DIR/usr/bin
+        ln -s /Developer/usr/bin/llvm-gcc-4.2 llvm-gcc-4.2
+        ln -s /Developer/usr/bin/llvm-g++-4.2 llvm-g++-4.2
+    fi
 fi
+
+# Remove unwind.h from the install directory for > 10.6
+if [ $DARWIN_VERS -gt 10 ]; then
+    find $DEST_DIR -name "unwind.h" -print | xargs rm || exit 1
+fi
+
+# Install libLTO.dylib
+if [ "$INSTALL_LIBLTO" == yes ]; then
+  LTO=$LLVMCORE_PATH/lib/libLTO.dylib
+  if [ ! -r $LTO  ]; then
+    LTO=$LLVMCORE_PATH/../lib/libLTO.dylib
+    if [ ! -r $LTO ]; then
+      echo "Error: llvmCore installation is missing libLTO.dylib"
+      exit 1
+    fi
+  fi
+  mkdir -p $DEST_DIR/Developer/usr/lib
+  cp $LTO $DEST_DIR/Developer/usr/lib/libLTO.dylib
+  strip -S $DEST_DIR/Developer/usr/lib/libLTO.dylib
+
+  # Add a symlink in /usr/lib for B&I.
+  mkdir -p $DEST_DIR/usr/lib/
+  cd $DEST_DIR/usr/lib && \
+    ln -s ../../Developer/usr/lib/libLTO.dylib ./libLTO.dylib
+fi
+
 # LLVM LOCAL end
 
 find $DEST_DIR -name \*.dSYM -print | xargs rm -r || exit 1

@@ -175,7 +175,10 @@ in the following sections.
 @table @emph
 @item Overall Options
 @xref{Overall Options,,Options Controlling the Kind of Output}.
-@gccoptlist{-c  -S  -E  -o @var{file}  -combine -pipe  -pass-exit-codes  @gol
+@c LLVM LOCAL begin no-canonical-prefixes
+@gccoptlist{-c  -S  -E  -o @var{file}  -combine  -no-canonical-prefixes  @gol
+-pipe  -pass-exit-codes  @gol
+@c LLVM LOCAL end no-canonical-prefixes
 @c APPLE LOCAL -ObjC 2001-08-03 --sts **
 -ObjC (APPLE ONLY) -ObjC++ (APPLE ONLY) @gol
 @c APPLE LOCAL begin fat builds
@@ -194,7 +197,8 @@ in the following sections.
 -faltivec (APPLE ONLY) @gol
 @c APPLE LOCAL CW asm blocks
 -fasm-blocks (APPLE ONLY) @gol
--fno-asm  -fno-builtin  -fno-builtin-@var{function} @gol
+@c APPLE LOCAL blocks 7205047 5811887
+-fno-asm -fno-blocks -fno-builtin  -fno-builtin-@var{function} @gol
 -fhosted  -ffreestanding -fopenmp -fms-extensions @gol
 -trigraphs  -no-integrated-cpp  -traditional  -traditional-cpp @gol
 @c APPLE LOCAL 5612787 sse4
@@ -549,7 +553,7 @@ Objective-C and Objective-C++ Dialects}.
 -dependency-file  -dylib_file  -dylinker_install_name @gol
 -dynamic  -dynamiclib  -exported_symbols_list @gol
 -filelist  -flat_namespace  -force_cpusubtype_ALL @gol
--force_flat_namespace  -headerpad_max_install_names @gol
+-force_flat_namespace  -force_load  -headerpad_max_install_names @gol
 @c APPLE LOCAL iframework for 4.3 4094959
 -iframework @gol
 -image_base  -init  -install_name  -keep_private_externs @gol
@@ -1237,6 +1241,14 @@ be displayed.
 Print (on the standard output) a description of target specific command
 line options for each tool.
 
+@c LLVM LOCAL begin no-canonical-prefixes
+@item -no-canonical-prefixes
+@opindex no-canonical-prefixes
+Do not expand any symbolic links, resolve references to @samp{/../}
+or @samp{/./}, or make the path absolute when generating a relative
+prefix.
+@c LLVM LOCAL end no-canonical-prefixes
+
 @item --version
 @opindex version
 Display the version number and copyrights of the invoked GCC@.
@@ -1430,8 +1442,8 @@ compilers as well as previous Apple versions of GCC.  It causes the
 @c APPLE LOCAL begin CW asm blocks
 @item -fasm-blocks
 Enable the use of blocks and entire functions of assembly code within
-a C or C++ file.  The syntax follows that used in CodeWarrior. (APPLE
-ONLY)
+a C or C++ file.  The syntax follows that used in CodeWarrior.  This
+option is not supported for ARM targets.  (APPLE ONLY)
 @c APPLE LOCAL end CW asm blocks
 
 @item -fno-asm
@@ -1447,6 +1459,16 @@ use the @option{-fno-gnu-keywords} flag instead, which has the same
 effect.  In C99 mode (@option{-std=c99} or @option{-std=gnu99}), this
 switch only affects the @code{asm} and @code{typeof} keywords, since
 @code{inline} is a standard keyword in ISO C99.
+
+@c APPLE LOCAL begin blocks 7205047 5811887
+@item -fno-blocks
+@opindex fno-blocks
+Disable the use of blocks.  In @option{-std=c99} mode, blocks are
+turned off by default.  @option{-fblocks} can be used to re-enable the
+feature, if off.  Runtime support for blocks first appeared in Mac OS
+X 10.6.  When targeting 10.6 (see @option{-mmacosx-version-min}) and
+later, the extension is on by default.
+@c APPLE LOCAL end blocks 7205047 5811887
 
 @item -fno-builtin
 @itemx -fno-builtin-@var{function}
@@ -5395,6 +5417,12 @@ parameters controlling inlining.
 abstract measurement of function's size.  In no way does it represent a count
 of assembly instructions and as such its exact meaning might change from one
 release to an another.
+@c LLVM LOCAL begin
+This option has no effect in llvm-gcc.  The always_inline and noinline
+parameters are honored, but none of the other inlining parameters have any
+effect; there is no specific user control on the amount of inlining done.  The
+compiler will do less inlining at -O2 or -Os than at -O3.
+@c LLVM LOCAL end
 
 @item -fkeep-inline-functions
 @opindex fkeep-inline-functions
@@ -7512,7 +7540,10 @@ For example, if the compiler would normally search for headers in
 @file{/usr/include} and libraries in @file{/usr/lib}, it will instead
 search @file{@var{dir}/usr/include} and @file{@var{dir}/usr/lib}.  
 
-If you use both this option and the @option{-isysroot} option, then
+With Apple's version of GCC, this option is effectively replaced by
+@option{-isysroot}, which you should use instead of @option{--sysroot}.
+For other (non-Apple) versions of GCC,
+if you use both this option and the @option{-isysroot} option, then
 the @option{--sysroot} option will apply to libraries, but the
 @option{-isysroot} option will apply to header files.
 
@@ -8511,10 +8542,14 @@ location @code{pc - 12} and the top 8 bits are set, then we know that
 there is a function name embedded immediately preceding this location
 and has length @code{((pc[-3]) & 0xff000000)}.
 
+@c APPLE LOCAL begin v7 thumb is default
 @item -mthumb
 @opindex mthumb
-Generate code for the 16-bit Thumb instruction set.  The default is to
-use the 32-bit ARM instruction set.
+Generate code for the 16-bit Thumb instruction set.  For ARMv7, the default
+is to use the THUMB2 instruction set. For all other architectures, the default
+is to use the 32-bit ARM instruction set. The ARM instruction set may be
+explicitly selected via @option{-mno-thumb} or @option{-marm}.
+@c APPLE LOCAL end v7 thumb is default
 
 @item -mtpcs-frame
 @opindex mtpcs-frame
@@ -9102,6 +9137,13 @@ an executable when linking, using the Darwin @file{libtool} command.
 @opindex force_cpusubtype_ALL
 This causes GCC's output file to have the @var{ALL} subtype, instead of
 one controlled by the @option{-mcpu} or @option{-march} option.
+
+@c APPLE LOCAL begin 7519550 force local
+@item -force_load  @var{library_name}
+@opindex force_load
+Loads all members of named static archive library.
+See man ld(1) for more information.
+@c APPLE LOCAL end 7519550 force local
 
 @item -allowable_client  @var{client_name}
 @itemx -client_name

@@ -114,10 +114,6 @@
   "/* APPLE LOCAL ARM 5683689 */"\
   %{!mmacosx-version-min=*: %{!miphoneos-version-min=*: %(darwin_cc1_minversion)}} \
   "/* APPLE LOCAL -fast or -fastf or -fastcp */"\
-  "/* LLVM LOCAL ignore -g in LTO mode */"\
-  "/* On Darwin, debug info is stored in separate .dSYM files. */"\
-  "/* This requires special support in LTO mode. */" \
-  %{O4|flto: %<g* } \
   %{!mkernel:%{!static:%{!fast:%{!fastf:%{!fastcp:%{!mdynamic-no-pic:-fPIC}}}}}}"
 
 #define DARWIN_ARCH_SPEC "%{m64:ppc64;:ppc}"
@@ -172,8 +168,8 @@
 #define DARWIN_DEFAULT_VERSION_TYPE  DARWIN_VERSION_MACOSX
 /* APPLE LOCAL end ARM 5683689 */
 
-/* APPLE LOCAL ARM 5681645 */
-#define DARWIN_IPHONEOS_LIBGCC_SPEC "-lgcc_s.10.5 -lgcc"
+/* APPLE LOCAL ARM 5681645 8307333 */
+#define DARWIN_IPHONEOS_LIBGCC_SPEC "-lgcc"
 
 /* APPLE LOCAL begin 5342595 */
 /* LLVM LOCAL begin */

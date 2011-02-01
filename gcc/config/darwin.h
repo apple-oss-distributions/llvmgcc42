@@ -134,6 +134,8 @@ extern GTY(()) int darwin_ms_struct;
 
 #define TARGET_OPTION_TRANSLATE_TABLE \
   { "-all_load", "-Zall_load" },  \
+  /* APPLE LOCAL 7519550 -force_load */ \
+  { "-force_load", "-Zforce_load" },  \
   { "-allowable_client", "-Zallowable_client" },  \
   { "-arch_errors_fatal", "-Zarch_errors_fatal" },  \
   { "-bind_at_load", "-Zbind_at_load" },  \
@@ -192,6 +194,8 @@ extern GTY(()) int darwin_ms_struct;
   { "-fpascal-strings", "-mpascal-strings" },	\
   { "-fno-pascal-strings", "-mno-pascal-strings" },	\
   /* APPLE LOCAL end constant cfstrings */	\
+  /* APPLE LOCAL multiple arch */ \
+  { "-arch_multiple", "-Zarch_multiple"}, \
   SUBTARGET_OPTION_TRANSLATE_TABLE
 
 /* APPLE LOCAL begin constant cfstrings */
@@ -257,6 +261,8 @@ do {					\
 #undef  WORD_SWITCH_TAKES_ARG
 #define WORD_SWITCH_TAKES_ARG(STR)              \
   (DEFAULT_WORD_SWITCH_TAKES_ARG (STR) ? 1 :    \
+   /* APPLE LOCAL 7519550 -force_load */ 	\
+   !strcmp (STR, "Zforce_load") ? 1 :     	\
    !strcmp (STR, "Zallowable_client") ? 1 :     \
    !strcmp (STR, "arch") ? 1 :                  \
    !strcmp (STR, "arch_only") ? 1 :             \
@@ -359,7 +365,8 @@ do {					\
 %{!fdump=*:%{!fsyntax-only:%{!c:%{!M:%{!MM:%{!E:%{!S:\
 "/* APPLE LOCAL end mainline 4.3 2006-10-31 4370146 */"\
     %{.c|.cc|.C|.cpp|.cp|.c++|.cxx|.CPP|.m|.mm: \
-    %{g*:%{!gstabs*:%{!g0: dsymutil %{o*:%*}%{!o:a.out}}}}}}}}}}}}"
+"/* APPLE LOCAL arch_multiple */"\
+    %{g*:%{!gstabs*:%{!g0:%{!Zarch_multiple: dsymutil %{o*:%*}%{!o:a.out}}}}}}}}}}}}}"
 /* APPLE LOCAL end mainline */
 
 #ifdef TARGET_SYSTEM_ROOT
@@ -394,8 +401,7 @@ do {					\
      %{Zbundle:-bundle} \
      %{Zbundle_loader*:-bundle_loader %*} \
      %{client_name*} \
-     %{compatibility_version*:%e-compatibility_version only allowed with -dynamiclib\
-} \
+     %{compatibility_version*:%e-compatibility_version only allowed with -dynamiclib} \
      %{current_version*:%e-current_version only allowed with -dynamiclib} \
      %{Zforce_flat_namespace:-force_flat_namespace} \
      %{Zinstall_name*:%e-install_name only allowed with -dynamiclib} \
@@ -416,6 +422,8 @@ do {					\
      %{private_bundle:%e-private_bundle not allowed with -dynamiclib} \
     } \
    %{Zall_load:-all_load} \
+   "/* APPLE LOCAL 7519550 -force_load */" \
+   %{Zforce_load*:-force_load %*} \
    %{Zallowable_client*:-allowable_client %*} \
    %{Zbind_at_load:-bind_at_load} \
    %{Zarch_errors_fatal:-arch_errors_fatal} \
@@ -433,9 +441,9 @@ do {					\
    %{mmacosx-version-min=*:-macosx_version_min %*} \
    %{miphoneos-version-min=*:-iphoneos_version_min %*} \
    "/* APPLE LOCAL end ARM 5683689 */"\
-   "/* APPLE LOCAL begin llvm */\
+   "/* LLVM LOCAL begin */\
   LLVM_LINK_SPEC \
-   /* APPLE LOCAL end llvm */" \
+   /* LLVM LOCAL end */" \
    %{nomultidefs} \
    %{Zmulti_module:-multi_module} %{Zsingle_module:-single_module} \
    %{Zmultiply_defined*:-multiply_defined %*} \
@@ -444,6 +452,11 @@ do {					\
    %{Zmultiplydefinedunused*:-multiply_defined_unused %*} \
    "/* APPLE LOCAL mainline 2007-06-01 5238485 */" \
    %{fpie:-pie} \
+   "/* LLVM LOCAL begin <rdar://problem/7651045> */" \
+   %{fPIE:-pie} \
+   %{fno-pie:-no_pie} \
+   %{fno-PIE:-no_pie} \
+   "/* LLVM LOCAL end <rdar://problem/7651045> */" \
    %{prebind} %{noprebind} %{nofixprebinding} %{prebind_all_twolevel_modules} \
    %{read_only_relocs} \
    %{sectcreate*} %{sectorder*} %{seg1addr*} %{segprot*} \
@@ -456,6 +469,8 @@ do {					\
    " LINK_SYSROOT_SPEC " \
    %{twolevel_namespace} %{twolevel_namespace_hints} \
    %{Zumbrella*: -umbrella %*} \
+   "/* APPLE LOCAL arch_multiple */" \
+   %{Zarch_multiple: -arch_multiple} \
    %{undefined*} \
    %{Zunexported_symbols_list*:-unexported_symbols_list %*} \
    %{Zweak_reference_mismatches*:-weak_reference_mismatches %*} \
@@ -550,23 +565,30 @@ do {					\
   { "darwin_iphoneos_libgcc", DARWIN_IPHONEOS_LIBGCC_SPEC },
 
 /* APPLE LOCAL begin ARM 5683689 */
+/* APPLE LOCAL begin link optimizations 6999417 */
 #define DARWIN_DYLIB1_SPEC						\
-  "%{miphoneos-version-min=*: -ldylib1.o}				\
+  "%{miphoneos-version-min=*:						\
+    %:version-compare(< 3.1 miphoneos-version-min= -ldylib1.o)}		\
    %{!miphoneos-version-min=*:						\
      %:version-compare(!> 10.5 mmacosx-version-min= -ldylib1.o)		\
      %:version-compare(>= 10.5 mmacosx-version-min= -ldylib1.10.5.o)}"
 
 /* APPLE LOCAL begin link optimizations 6499452 */
 #define DARWIN_BUNDLE1_SPEC						\
-  "-lbundle1.o"
+  "%{miphoneos-version-min=*:						\
+    %:version-compare(< 3.1 miphoneos-version-min= -lbundle1.o)}	\
+   %{!miphoneos-version-min=*: -lbundle1.o }"
 /* APPLE LOCAL end link optimizations 6499452 */
 
 #define DARWIN_CRT1_SPEC						\
 /* APPLE LOCAL ARM 5823776 iphoneos should use crt1.o */		\
-  "%{miphoneos-version-min=*: -lcrt1.o}					\
+  "%{miphoneos-version-min=*:						\
+    %:version-compare(< 3.1 miphoneos-version-min= -lcrt1.o)		\
+    %:version-compare(>= 3.1 miphoneos-version-min= -lcrt1.3.1.o)}	\
    %{!miphoneos-version-min=*:						\
      %:version-compare(!> 10.5 mmacosx-version-min= -lcrt1.o)		\
      %:version-compare(>= 10.5 mmacosx-version-min= -lcrt1.10.5.o)}"
+/* APPLE LOCAL end link optimizations 6999417 */
 /* APPLE LOCAL end ARM 5683689 */
 
 /* APPLE LOCAL begin prefer -lSystem 6645902 */
@@ -662,18 +684,19 @@ do {					\
 /* As in the warning above, alias definitions aren't supported on Mach-O. */
 #define TARGET_DOES_NOT_SUPPORT_ALIAS_DEFINITIONS
 
-/* weak_import, a Darwin special, does not make function definitions weak. */
+/* weak_import, a Darwin special, does not make definitions weak. */
 #define TARGET_ADJUST_LLVM_LINKAGE(FN, DECL)                            \
   do {                                                                  \
     if ((DECL) &&                                                       \
-        TREE_CODE (DECL) == FUNCTION_DECL &&                            \
-        !DECL_EXTERNAL (DECL) &&                                        \
+        (TREE_CODE (DECL) != FUNCTION_DECL || !DECL_EXTERNAL (DECL)) && \
         TREE_PUBLIC (DECL) &&                                           \
         DECL_WEAK (DECL) &&                                             \
         ! lookup_attribute ("weak", DECL_ATTRIBUTES (DECL)) &&          \
 	lookup_attribute ("weak_import", DECL_ATTRIBUTES (DECL)) &&     \
         (FN)->hasWeakLinkage()) {                                       \
-      (FN)->setLinkage(Function::ExternalLinkage);                      \
+      (FN)->setLinkage(TREE_CODE(DECL)==FUNCTION_DECL ?                 \
+                       Function::ExternalLinkage :                      \
+                       GlobalValue::ExternalLinkage);                   \
     }                                                                   \
   } while (0)
 
@@ -690,13 +713,21 @@ do {					\
       char *N = (char *)alloca(strlen(fmt) + 37);                       \
       sprintf(N, fmt, i++);                                             \
       GV->setName(N);                                                   \
+      GV->setAlignment(TARGET_64BIT ? 8 : 4);                           \
     }                                                                   \
   } while (0)
 /* LLVM LOCAL - end radar 6389998 */
 
-/* Assign STRING_CSTs to the .cstring section.  */
-#define LLVM_CSTRING_SECTION "__TEXT,__cstring,cstring_literals"
-#define LLVM_CONST_DATA_SECTION "__DATA,__const"
+/* LLVM LOCAL - begin radar 7291825 */
+/* Give a constant string a sufficient alignment for the platform.  */
+#define TARGET_ADJUST_CSTRING_ALIGN(GV)                                 \
+  do {                                                                  \
+    if (GV->hasInternalLinkage()) {                                     \
+      GV->setAlignment(TARGET_64BIT ? 8 : 4);                           \
+    }                                                                   \
+  } while (0)
+/* LLVM LOCAL - end radar 7291825 */
+
 #endif
 /* LLVM LOCAL end */
 
@@ -1464,17 +1495,30 @@ const char *darwin_objc_llvm_special_name_section(const char*);
     argvec.push_back ("--relocation-model=pic");     \
   else if (!MACHO_DYNAMIC_NO_PIC_P)                  \
     argvec.push_back ("--relocation-model=static")
-#else /* defined (TARGET_386) */
+#elif defined (TARGET_ARM)
+#define LLVM_SET_TARGET_OPTIONS(argvec)              \
+  if (flag_pic)                                      \
+    argvec.push_back ("--relocation-model=pic");     \
+  else if (!MACHO_DYNAMIC_NO_PIC_P)                  \
+    argvec.push_back ("--relocation-model=static");  \
+  if (darwin_iphoneos_version_min)                   \
+    {                                                \
+      const char *p = darwin_iphoneos_version_min;   \
+      if (ISDIGIT (*p) && *p == '1' || *p == '2')    \
+        {                                            \
+          ++p;                                       \
+          if (!p || *p == '.')                       \
+            argvec.push_back("--arm-reserve-r9");    \
+        }                                            \
+    }
+#else /* !TARGET_386 && !TARGET_ARM */
 #define LLVM_SET_TARGET_OPTIONS(argvec)              \
   if (flag_pic)                                      \
     argvec.push_back ("--relocation-model=pic");     \
   else if (!MACHO_DYNAMIC_NO_PIC_P)                  \
     argvec.push_back ("--relocation-model=static")
-#endif /* defined (TARGET_386) */
+#endif /* !TARGET_386 && !TARGET_ARM */
 
-/* On Darwin _Unwind_Resume is sensitive to the dynamic stack layout; we
-   use _Unwind_Resume_or_Rethrow instead.  */
-#define LLVM_STACKSENSITIVE_UNWIND_RESUME 1
 #endif
 /* LLVM LOCAL end */
 

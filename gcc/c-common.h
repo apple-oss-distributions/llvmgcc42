@@ -467,11 +467,9 @@ extern int warn_unknown_pragmas; /* Tri state variable.  */
 extern int warn_format;
 
 /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
 /* Warn about possible security problems with format functions  */
 
 extern int warn_format_security;
-#endif
 /* LLVM LOCAL end */
 
 /* APPLE LOCAL begin disable_typechecking_for_spec_flag */
@@ -1145,7 +1143,8 @@ enum {
     BLOCK_FIELD_IS_BLOCK    =  7,  /* a block variable */
     BLOCK_FIELD_IS_BYREF    =  8,  /* the on stack structure holding the __block variable */
     BLOCK_FIELD_IS_WEAK     = 16,  /* declared __weak, only used in byref copy helpers */
-    BLOCK_BYREF_CALLER      = 128  /* called from __block (byref) copy/dispose support routines */
+    BLOCK_BYREF_CALLER      = 128, /* called from __block (byref) copy/dispose support routines */
+    BLOCK_BYREF_CURRENT_MAX = 256
 };
 /* APPLE LOCAL end radar 5847976 */
 /* APPLE LOCAL begin radar 5732232 - blocks */
@@ -1157,8 +1156,10 @@ enum {
      BLOCK_IS_GC =             (1 << 27),
      /* APPLE LOCAL radar 5822844 */
      BLOCK_IS_GLOBAL = 	       (1 << 28),
-     /* APPLE LOCAL radar 5847213 */
-     BLOCK_HAS_DESCRIPTOR =    (1 << 29)
+     /* APPLE LOCAL radar 7735196 */
+     BLOCK_USE_STRET =    (1 << 29),
+     /* APPLE LOCAL radar 8143947 */
+     BLOCK_HAS_SIGNATURE  =    (1 << 30)
 };
 
 struct block_sema_info {
@@ -1242,6 +1243,9 @@ extern tree build_block_helper_name (int);
 
 /* APPLE LOCAL radar 6353006  */
 extern tree c_build_generic_block_struct_type (void);
+
+/* APPLE LOCAL radar 7760213 */
+extern int HasByrefArray(tree);
 
 /* In c-omp.c  */
 extern tree c_finish_omp_master (tree);

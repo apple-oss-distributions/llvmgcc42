@@ -228,7 +228,8 @@ static char *reg_offset;
    or is -1 if no hard reg was assigned.
    If N is a hard reg number, element N is N.  */
 
-short *reg_renumber;
+/* LLVM LOCAL avoid common for nm */
+short *reg_renumber = NULL;
 
 /* LLVM LOCAL begin */
 #ifndef ENABLE_LLVM
@@ -380,7 +381,10 @@ local_alloc (void)
 
   /* APPLE LOCAL begin 5695218 */
   gcc_assert (!reg_inheritance_matrix);
-  if (PIC_OFFSET_TABLE_REGNUM != INVALID_REGNUM)
+  /* The max_regno check limits the size of the reg_inheritance_matrix
+     to avoid malloc failure.  10033^2 / 8 = 12MB.  */
+  if (PIC_OFFSET_TABLE_REGNUM != INVALID_REGNUM
+      && max_regno <= 10033)
     {
       reg_inheritance_matrix = sbitmap_vector_alloc (max_regno, max_regno);
       sbitmap_vector_zero (reg_inheritance_matrix, max_regno);
@@ -392,7 +396,7 @@ local_alloc (void)
   update_equiv_regs ();
 
   /* APPLE LOCAL begin 5695218 */
-  if (PIC_OFFSET_TABLE_REGNUM != INVALID_REGNUM)
+  if (reg_inheritance_matrix)
     {
       reg_inheritance ();
       sbitmap_vector_free (reg_inheritance_matrix);
@@ -893,7 +897,7 @@ update_equiv_regs (void)
 	  src = SET_SRC (set);
 
 	  /* APPLE LOCAL begin 5695218 */
-	  if (PIC_OFFSET_TABLE_REGNUM != INVALID_REGNUM)
+	  if (reg_inheritance_matrix)
 	    {
 	      int dstregno;
 		if (REG_P (dest))
@@ -2676,19 +2680,24 @@ reg_inheritance_1 (rtx *px, void *data)
 
   dstregno = (int)data;
 #ifdef TARGET_386
-  /* Ugly special case: When moving a DImode constant into an FP
-     register, GCC will use the movdf_nointeger pattern, pushing the
-     DImode constant into memory and loading into the '387.  It looks
-     like this: (set (reg:DF) (subreg:DF (reg:DI))).  We're choosing
-     to match the subreg; hope this is sufficient.
+  /*
+    Ugly special case: When moving a DI/SI/mode constant into an FP
+    register, GCC will use the mov/df/sf/_nointeger pattern, pushing
+    the DI/SI/mode constant into memory and loading therefrom into an
+    FP register ('387 or SSE).  It looks like this: (set (reg:DF)
+    (subreg:DF (reg:DI))).  We're choosing to match the subreg; hope
+    this is sufficient.  See Radars 6050374 and 6951876.
   */
-  if (GET_CODE (x) == SUBREG
-      && GET_MODE (x) == DFmode
-      && GET_MODE (SUBREG_REG (x)) == DImode)
-    {
-      SET_BIT (reg_inheritance_matrix[dstregno], PIC_OFFSET_TABLE_REGNUM);
-      return 0;
-    }
+  if (GET_CODE (x) == SUBREG)
+    if ((GET_MODE (x) == DFmode
+	 && GET_MODE (SUBREG_REG (x)) == DImode)
+	||
+	(GET_MODE (x) == SFmode
+	 && GET_MODE (SUBREG_REG (x)) == SImode))
+      {
+	SET_BIT (reg_inheritance_matrix[dstregno], PIC_OFFSET_TABLE_REGNUM);
+	return 0;
+      }
 #endif
   if (GET_CODE (x) == SUBREG)
     x = SUBREG_REG (x);

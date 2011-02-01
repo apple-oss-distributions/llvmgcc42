@@ -1262,7 +1262,8 @@ static bool ix86_pass_by_reference (CUMULATIVE_ARGS *, enum machine_mode,
 				    tree, bool);
 static void ix86_init_builtins (void);
 static rtx ix86_expand_builtin (tree, rtx, rtx, enum machine_mode, int);
-static const char *ix86_mangle_fundamental_type (tree);
+/* APPLE LOCAL mangle_type 7105099 */
+static const char *ix86_mangle_type (tree);
 static tree ix86_stack_protect_fail (void);
 static rtx ix86_internal_arg_pointer (void);
 static void ix86_dwarf_handle_frame_unspec (const char *, rtx, int);
@@ -1293,13 +1294,15 @@ enum x86_64_reg_class
     X86_64_X87_CLASS,
     X86_64_X87UP_CLASS,
     X86_64_COMPLEX_X87_CLASS,
-    X86_64_MEMORY_CLASS
+    X86_64_MEMORY_CLASS,
+    X86_64_POINTER_CLASS
   };
 #endif /* !ENABLE_LLVM */
 /* LLVM LOCAL end */
 static const char * const x86_64_reg_class_name[] = {
   "no", "integer", "integerSI", "sse", "sseSF", "sseDF",
-  "sseup", "x87", "x87up", "cplx87", "no"
+  /* LLVM LOCAL */
+  "sseup", "x87", "x87up", "cplx87", "no", "ptr"
 };
 
 #define MAX_CLASSES 4
@@ -1464,8 +1467,10 @@ static section *x86_64_elf_select_section (tree decl, int reloc,
 #define TARGET_INSERT_ATTRIBUTES SUBTARGET_INSERT_ATTRIBUTES
 #endif
 
-#undef TARGET_MANGLE_FUNDAMENTAL_TYPE
-#define TARGET_MANGLE_FUNDAMENTAL_TYPE ix86_mangle_fundamental_type
+/* APPLE LOCAL begin mangle_type 7105099 */
+#undef TARGET_MANGLE_TYPE
+#define TARGET_MANGLE_TYPE ix86_mangle_type
+/* APPLE LOCAL end mangle_type 7105099 */
 
 #undef TARGET_STACK_PROTECT_FAIL
 #define TARGET_STACK_PROTECT_FAIL ix86_stack_protect_fail
@@ -2076,7 +2081,8 @@ override_options (void)
   if (flag_omit_frame_pointer)
     target_flags &= ~MASK_OMIT_LEAF_FRAME_POINTER;
   else if (TARGET_OMIT_LEAF_FRAME_POINTER)
-    flag_omit_frame_pointer = 1;
+    /* LLVM LOCAL - Use '3' to indicate omitting leaf FPs only  */
+    flag_omit_frame_pointer = 3;
 
   /* If we're doing fast math, we don't care about comparison order
      wrt NaNs.  This lets us use a shorter comparison sequence.  */
@@ -2221,8 +2227,12 @@ override_options (void)
   /* When scheduling description is not available, disable scheduler pass
      so it won't slow down the compilation and make x87 code slower.  */
   /* APPLE LOCAL 5591571 */
+  /* LLVM LOCAL begin */
+#ifndef ENABLE_LLVM
   if (1 || !TARGET_SCHEDULE)
     flag_schedule_insns_after_reload = flag_schedule_insns = 0;
+#endif
+  /* LLVM LOCAL end */
 
   /* APPLE LOCAL begin dynamic-no-pic */
 #if TARGET_MACHO
@@ -2435,7 +2445,8 @@ x86_output_aligned_bss (FILE *file, tree decl ATTRIBUTE_UNUSED,
 #endif
 
 void
-optimization_options (int level, int size ATTRIBUTE_UNUSED)
+/* LLVM LOCAL */
+optimization_options (int level ATTRIBUTE_UNUSED, int size ATTRIBUTE_UNUSED)
 {
   /* APPLE LOCAL begin disable strict aliasing; breaks too much existing code.  */
 #if TARGET_MACHO
@@ -2444,10 +2455,14 @@ optimization_options (int level, int size ATTRIBUTE_UNUSED)
   /* APPLE LOCAL end disable strict aliasing; breaks too much existing code.  */
   /* For -O2 and beyond, turn off -fschedule-insns by default.  It tends to
      make the problem with not enough registers even worse.  */
+  /* LLVM LOCAL begin */
+#ifndef ENABLE_LLVM
 #ifdef INSN_SCHEDULING
   if (level > 1)
     flag_schedule_insns = 0;
 #endif
+#endif
+  /* LLVM LOCAL end */
 
   /* APPLE LOCAL begin pragma fenv */
   /* Trapping math is not needed by many users, and is expensive.
@@ -2496,14 +2511,18 @@ optimization_options (int level, int size ATTRIBUTE_UNUSED)
    per-function flags are reset.  */
 #if TARGET_MACHO
 void
-reset_optimization_options (int level, int size)
+reset_optimization_options (int level ATTRIBUTE_UNUSED, int size)
 {
   /* For -O2 and beyond, turn off -fschedule-insns by default.  It tends to
      make the problem with not enough registers even worse.  */
+  /* LLVM LOCAL begin */
+#ifndef ENABLE_LLVM
 #ifdef INSN_SCHEDULING
   if (level > 1)
     flag_schedule_insns = 0;
 #endif
+#endif
+  /* LLVM LOCAL end */
 
   /* APPLE LOCAL begin pragma fenv */
   /* Trapping math is not needed by many users, and is expensive.
@@ -3300,8 +3319,12 @@ merge_classes (enum x86_64_reg_class class1, enum x86_64_reg_class class2)
   if ((class1 == X86_64_INTEGERSI_CLASS && class2 == X86_64_SSESF_CLASS)
       || (class2 == X86_64_INTEGERSI_CLASS && class1 == X86_64_SSESF_CLASS))
     return X86_64_INTEGERSI_CLASS;
+  /* LLVM LOCAL begin */
   if (class1 == X86_64_INTEGER_CLASS || class1 == X86_64_INTEGERSI_CLASS
-      || class2 == X86_64_INTEGER_CLASS || class2 == X86_64_INTEGERSI_CLASS)
+      || class1 == X86_64_POINTER_CLASS
+      || class2 == X86_64_INTEGER_CLASS || class2 == X86_64_INTEGERSI_CLASS
+      || class2 == X86_64_POINTER_CLASS)
+  /* LLVM LOCAL end */
     return X86_64_INTEGER_CLASS;
 
   /* Rule #5: If one of the classes is X87, X87UP, or COMPLEX_X87 class,
@@ -3449,17 +3472,32 @@ classify_argument (enum machine_mode mode, tree type,
 	    if (!num)
 	      return 0;
 
-	    /* The partial classes are now full classes.  */
-	    if (subclasses[0] == X86_64_SSESF_CLASS && bytes != 4)
-	      subclasses[0] = X86_64_SSE_CLASS;
-	    if (subclasses[0] == X86_64_INTEGERSI_CLASS && bytes != 4)
-	      subclasses[0] = X86_64_INTEGER_CLASS;
-
+	    /* LLVM LOCAL begin 7387470 */
 	    for (i = 0; i < words; i++)
 	      classes[i] = subclasses[i % num];
 
-	    break;
+	    /* If the first register has a 32-bit class, but there are
+	       more than 32-bits in the type, upgrade it to the
+	       corresponding 64-bit class.  */
+	    if ((bytes > 4) &&
+		((subclasses[0] == X86_64_SSESF_CLASS) ||
+		 (subclasses[0] == X86_64_INTEGERSI_CLASS))) {
+		classes[0] = (subclasses[0] == X86_64_SSESF_CLASS) ?
+		  X86_64_SSE_CLASS : X86_64_INTEGER_CLASS;
+		/* subclasses[1] is only valid if num == 2.  If it's
+		   invalid, or it's set to a 32-bit class, AND there
+		   are more than twelve bytes in the type, upgrade the
+		   second register to 64-bits.  (If we got here, the
+		   first register already has a 64-bit class.)  */
+		if (bytes > 12 &&
+		    (num == 1 ||
+		     subclasses[1] == X86_64_SSESF_CLASS ||
+		     subclasses[1] == X86_64_INTEGERSI_CLASS))
+		  classes[1] = classes[0];
+	    }
 	  }
+	  break;
+	  /* LLVM LOCAL end 7387470 */
 	case UNION_TYPE:
 	case QUAL_UNION_TYPE:
 	  /* Unions are similar to RECORD_TYPE but offset is always 0.
@@ -3548,6 +3586,14 @@ classify_argument (enum machine_mode mode, tree type,
       classes[1] = X86_64_SSEUP_CLASS;
       return 2;
     case DImode:
+      /* LLVM LOCAL begin */
+      if (POINTER_TYPE_P(type))
+        {
+          classes[0] = X86_64_POINTER_CLASS;
+          return 1;
+        }
+      /* fall through */
+      /* LLVM LOCAL end */
     case SImode:
     case HImode:
     case QImode:
@@ -3648,6 +3694,8 @@ examine_argument (enum machine_mode mode, tree type, int in_return,
       {
       case X86_64_INTEGER_CLASS:
       case X86_64_INTEGERSI_CLASS:
+      /* LLVM LOCAL */
+      case X86_64_POINTER_CLASS:
 	(*int_nregs)++;
 	break;
       case X86_64_SSE_CLASS:
@@ -3761,6 +3809,8 @@ construct_container (enum machine_mode mode, enum machine_mode orig_mode,
       {
       case X86_64_INTEGER_CLASS:
       case X86_64_INTEGERSI_CLASS:
+      /* LLVM LOCAL */
+      case X86_64_POINTER_CLASS:
 	return gen_rtx_REG (mode, intreg[0]);
       case X86_64_SSE_CLASS:
       case X86_64_SSESF_CLASS:
@@ -3796,6 +3846,8 @@ construct_container (enum machine_mode mode, enum machine_mode orig_mode,
 	    break;
 	  case X86_64_INTEGER_CLASS:
 	  case X86_64_INTEGERSI_CLASS:
+          /* LLVM LOCAL */
+          case X86_64_POINTER_CLASS:
 	    /* Merge TImodes on aligned occasions here too.  */
 	    if (i * 8 + 8 > bytes)
 	      tmpmode = mode_for_size ((bytes - i * 8) * BITS_PER_UNIT, MODE_INT, 0);
@@ -22060,9 +22112,18 @@ iasm_type_for (tree arg)
       enum machine_mode mode = VOIDmode;
       if (IDENTIFIER_POINTER (arg)[1] == 'e')
 	mode = SImode;
+/* LLVM LOCAL begin */
+/* Accept H registers for LLVM, this totally obviates need for ASM_USES. */
+#ifndef ENABLE_LLVM
       else if (/* IDENTIFIER_POINTER (arg)[2] == 'h'
 		  || */ IDENTIFIER_POINTER (arg)[2] == 'l')
 	mode = QImode;
+#else
+      else if (IDENTIFIER_POINTER (arg)[2] == 'h'
+               || IDENTIFIER_POINTER (arg)[2] == 'l')
+	mode = QImode;
+#endif
+/* LLVM LOCAL end */
       else if (IDENTIFIER_POINTER (arg)[2] == 'x')
 	mode = HImode;
       else if (IDENTIFIER_POINTER (arg)[1] == 'r')
@@ -22100,7 +22161,7 @@ iasm_raise_reg (tree arg)
       decl = lookup_name (arg);
       if (decl == error_mark_node)
 	decl = 0;
-      if (decl == 0)
+      if (decl == 0 || !DECL_ASM_BLOCK_REGISTER (decl))
 	{
 	  tree type = iasm_type_for (arg);
 	  if (type)
@@ -22110,6 +22171,7 @@ iasm_raise_reg (tree arg)
 	      DECL_REGISTER (decl) = 1;
 	      C_DECL_REGISTER (decl) = 1;
 	      DECL_HARD_REGISTER (decl) = 1;
+              DECL_ASM_BLOCK_REGISTER (decl) = 1;
 	      set_user_assembler_name (decl, IDENTIFIER_POINTER (arg));
 	      decl = lang_hooks.decls.pushdecl (decl);
 	    }
@@ -22817,8 +22879,9 @@ iasm_x86_canonicalize_operands (const char **opcode_p, tree iargs, void *ep)
 	   || strcasecmp (opcode, "str") == 0
 	   || strcasecmp (opcode, "xlat") == 0)
     e->mod[0] = 0;
-  else if (strcasecmp (opcode, "rcr") == 0
+  else if (strcasecmp (opcode, "lea") == 0
 	   || strcasecmp (opcode, "rcl") == 0
+	   || strcasecmp (opcode, "rcr") == 0
 	   || strcasecmp (opcode, "rol") == 0
 	   || strcasecmp (opcode, "ror") == 0
 	   || strcasecmp (opcode, "sal") == 0
@@ -22953,6 +23016,12 @@ iasm_print_op (char *buf, tree arg, unsigned argnum, tree *uses,
 	      }
 	  }
 
+        /* Complicated expression as JMP or CALL target. */
+        if (e->modifier && strcmp(e->modifier, "A") == 0)
+          {
+            strcat (buf, "*");
+            e->modifier = 0;
+          }
 	e->as_immediate = true;
 	iasm_print_operand (buf, op1, argnum, uses,
 			    must_be_reg, must_not_be_reg, e);
@@ -23039,8 +23108,17 @@ iasm_print_op (char *buf, tree arg, unsigned argnum, tree *uses,
 /* Return the mangling of TYPE if it is an extended fundamental type.  */
 
 static const char *
-ix86_mangle_fundamental_type (tree type)
+/* APPLE LOCAL mangle_type 7105099 */
+ix86_mangle_type (tree type)
 {
+  /* APPLE LOCAL begin mangle_type 7105099 */
+  type = TYPE_MAIN_VARIANT (type);
+
+  if (TREE_CODE (type) != VOID_TYPE && TREE_CODE (type) != BOOLEAN_TYPE
+      && TREE_CODE (type) != INTEGER_TYPE && TREE_CODE (type) != REAL_TYPE)
+    return NULL;
+
+  /* APPLE LOCAL end mangle_type 7105099 */
   switch (TYPE_MODE (type))
     {
     case TFmode:

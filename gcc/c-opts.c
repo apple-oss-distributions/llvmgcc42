@@ -239,7 +239,9 @@ c_common_init_options (unsigned int argc, const char **argv)
 
   flag_exceptions = c_dialect_cxx ();
   /* LLVM local begin One Definition Rule */
+#ifdef ENABLE_LLVM
   flag_odr = c_dialect_cxx ();
+#endif
   /* LLVM local end */
   warn_pointer_arith = c_dialect_cxx ();
   warn_write_strings = c_dialect_cxx();
@@ -1191,9 +1193,7 @@ c_common_post_options (const char **pfilename)
       warning (OPT_Wformat_nonliteral,
 	       "-Wformat-nonliteral ignored without -Wformat");
       /* LLVM LOCAL begin */
-#ifdef ENABLE_LLVM
       if (warn_format_security)
-#endif
         warning (OPT_Wformat_security,
                  "-Wformat-security ignored without -Wformat");
       /* LLVM LOCAL end */

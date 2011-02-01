@@ -377,7 +377,10 @@ pop_label (tree label, tree old_value)
 	  /* Avoid crashing later.  */
 	  define_label (location, DECL_NAME (label));
 	}
-      else if (!TREE_USED (label))
+/* LLVM LOCAL begin 8204109 */
+      else if (!TREE_USED (label) &&
+               strncmp (IDENTIFIER_POINTER (DECL_NAME (label)), "LASM$", 5) != 0)
+/* LLVM LOCAL end */
 	warning (OPT_Wunused_label, "label %q+D defined but not used", label);
     }
 
@@ -1903,6 +1906,10 @@ duplicate_decls (tree newdecl, tree olddecl, bool newdecl_is_friend)
 	    DECL_PENDING_INLINE_INFO (newdecl) = DECL_PENDING_INLINE_INFO (olddecl);
 
 	  DECL_DECLARED_INLINE_P (newdecl) |= DECL_DECLARED_INLINE_P (olddecl);
+
+	  /* LLVM LOCAL begin inlinehint attribute */
+	  DECL_EXPLICIT_INLINE_P (newdecl) |= DECL_EXPLICIT_INLINE_P (olddecl);
+	  /* LLVM LOCAL end inlinehint attribute */
 
 	  /* If either decl says `inline', this fn is inline, unless
 	     its definition was passed already.  */
@@ -5309,8 +5316,9 @@ value_dependent_init_p (tree init)
 }
 
 /* APPLE LOCAL begin blocks 6040305 (cr) */
-static tree block_byref_id_object_copy;
-static tree block_byref_id_object_dispose;
+#define BLOCK_ALIGN_MAX 18
+static tree block_byref_id_object_copy[BLOCK_BYREF_CURRENT_MAX*(BLOCK_ALIGN_MAX+1)];
+static tree block_byref_id_object_dispose[BLOCK_BYREF_CURRENT_MAX*(BLOCK_ALIGN_MAX+1)];
 
 /**
  This routine builds:
@@ -5321,14 +5329,14 @@ static tree block_byref_id_object_dispose;
    _Block_object_assign(&_dest->object, _src->object, BLOCK_FIELD_IS_BLOCK[|BLOCK_FIELD_IS_WEAK])  //  blocks
  }  */
 static void
-synth_block_byref_id_object_copy_func (int flag)
+synth_block_byref_id_object_copy_func (int flag, int kind)
 {
   tree stmt;
   tree dst_arg, src_arg;
   tree dst_obj, src_obj;
   tree call_exp;
 
-  gcc_assert (block_byref_id_object_copy);
+  gcc_assert (block_byref_id_object_copy[kind]);
   /* Set up: (void* _dest, void*_src) parameters. */
   dst_arg = build_decl (PARM_DECL, get_identifier ("_dst"),
                         ptr_type_node);
@@ -5345,12 +5353,12 @@ synth_block_byref_id_object_copy_func (int flag)
                                tree_cons (NULL_TREE,
                                           ptr_type_node,
                                           NULL_TREE)); */
-  DECL_ARGUMENTS (block_byref_id_object_copy) = dst_arg;
+  DECL_ARGUMENTS (block_byref_id_object_copy[kind]) = dst_arg;
   /* function header synthesis. */
   push_function_context ();
-  /* start_block_helper_function (block_byref_id_object_copy, true); */
+  /* start_block_helper_function (block_byref_id_object_copy[kind], true); */
   /* store_parm_decls_from (arg_info); */
-  start_preparsed_function (block_byref_id_object_copy,
+  start_preparsed_function (block_byref_id_object_copy[kind],
                             /*attrs*/NULL_TREE,
                             SF_PRE_PARSED);
 
@@ -5387,12 +5395,12 @@ synth_block_byref_id_object_copy_func (int flag)
     _Block_object_dispose(_src->object, BLOCK_FIELD_IS_OBJECT[|BLOCK_FIELD_IS_WEAK]) // objects
     _Block_object_dispose(_src->object, BLOCK_FIELD_IS_BLOCK[|BLOCK_FIELD_IS_WEAK]) // blocks
   }  */
-static void synth_block_byref_id_object_dispose_func (int flag)
+static void synth_block_byref_id_object_dispose_func (int flag, int kind)
 {
   tree stmt;
   tree src_arg, src_obj, rel_exp;
 
-  gcc_assert (block_byref_id_object_dispose);
+  gcc_assert (block_byref_id_object_dispose[kind]);
   /* Set up: (void *_src) parameter. */
   src_arg = build_decl (PARM_DECL, get_identifier ("_src"),
                         ptr_type_node);
@@ -5402,12 +5410,12 @@ static void synth_block_byref_id_object_dispose_func (int flag)
      arg_info->parms = src_arg;
      arg_info->types = tree_cons (NULL_TREE, ptr_type_node,
                                   NULL_TREE); */
-  DECL_ARGUMENTS (block_byref_id_object_dispose) = src_arg;
+  DECL_ARGUMENTS (block_byref_id_object_dispose[kind]) = src_arg;
   /* function header synthesis. */
   push_function_context ();
-  /* start_block_helper_function (block_byref_id_object_dispose, true); */
+  /* start_block_helper_function (block_byref_id_object_dispose[kind], true); */
   /* store_parm_decls_from (arg_info); */
-  start_preparsed_function (block_byref_id_object_dispose,
+  start_preparsed_function (block_byref_id_object_dispose[kind],
                             /*attrs*/NULL_TREE,
                             SF_PRE_PARSED);
 
@@ -5602,10 +5610,17 @@ init_byref_decl (tree decl, tree init, int flag)
 
   if (COPYABLE_BYREF_LOCAL_NONPOD (decl))
     {
-      char name [64];
+      char name[64];
+      int align = exact_log2 ((DECL_ALIGN (decl)+TYPE_ALIGN (ptr_type_node)-1) / TYPE_ALIGN (ptr_type_node));
+      int kind;
+      if (align == -1 || align > BLOCK_ALIGN_MAX) {
+	error ("invalid alignment for __block variable");
+	kind = 0;
+      } else
+	kind = align*BLOCK_BYREF_CURRENT_MAX + flag;
       /* Add &__Block_byref_id_object_copy, &__Block_byref_id_object_dispose
 	 initializers. */
-      if (!block_byref_id_object_copy)
+      if (!block_byref_id_object_copy[kind])
 	{
 	  tree func_type;
 	  push_lang_context (lang_name_c);
@@ -5615,20 +5630,20 @@ init_byref_decl (tree decl, tree init, int flag)
 				 tree_cons (NULL_TREE, ptr_type_node,
 					    tree_cons (NULL_TREE, ptr_type_node,
 						       void_list_node)));
-	  strcpy (name, "__Block_byref_id_object_copy");
-	  block_byref_id_object_copy = build_helper_func_decl (get_identifier (name),
-							       func_type);
-	  DECL_CONTEXT (block_byref_id_object_copy) = current_function_decl;
+	  sprintf (name, "__Block_byref_id_object_copy%d", kind);
+	  block_byref_id_object_copy[kind] = build_helper_func_decl (get_identifier (name),
+								     func_type);
+	  DECL_CONTEXT (block_byref_id_object_copy[kind]) = current_function_decl;
 	  /* Synthesize function definition. */
-	  synth_block_byref_id_object_copy_func (flag);
+	  synth_block_byref_id_object_copy_func (flag, kind);
 	  pop_lang_context ();
 	}
       initlist = tree_cons (fields,
-			    build_fold_addr_expr (block_byref_id_object_copy),
+			    build_fold_addr_expr (block_byref_id_object_copy[kind]),
 			    initlist);
       fields = TREE_CHAIN (fields);
 
-      if (!block_byref_id_object_dispose)
+      if (!block_byref_id_object_dispose[kind])
 	{
 	  tree func_type;
 	  push_lang_context (lang_name_c);
@@ -5637,16 +5652,16 @@ init_byref_decl (tree decl, tree init, int flag)
 	  func_type =
 	    build_function_type (void_type_node,
 				 tree_cons (NULL_TREE, ptr_type_node, void_list_node));
-	  strcpy (name, "__Block_byref_id_object_dispose");
-	  block_byref_id_object_dispose = build_helper_func_decl (get_identifier (name),
-								  func_type);
-	  DECL_CONTEXT (block_byref_id_object_dispose) = current_function_decl;
+	  sprintf (name, "__Block_byref_id_object_dispose%d", kind);
+	  block_byref_id_object_dispose[kind] = build_helper_func_decl (get_identifier (name),
+									func_type);
+	  DECL_CONTEXT (block_byref_id_object_dispose[kind]) = current_function_decl;
 	  /* Synthesize function definition. */
-	  synth_block_byref_id_object_dispose_func (flag);
+	  synth_block_byref_id_object_dispose_func (flag, kind);
 	  pop_lang_context ();
 	}
       initlist = tree_cons (fields,
-			    build_fold_addr_expr (block_byref_id_object_dispose),
+			    build_fold_addr_expr (block_byref_id_object_dispose[kind]),
 			    initlist);
       fields = TREE_CHAIN (fields);
     }
@@ -6805,6 +6820,11 @@ grokfndecl (tree ctype,
   /* If the declaration was declared inline, mark it as such.  */
   if (inlinep)
     DECL_DECLARED_INLINE_P (decl) = 1;
+  /* LLVM LOCAL begin inlinehint attribute */
+  if (inlinep)
+    DECL_EXPLICIT_INLINE_P (decl) = 1;
+  /* LLVM LOCAL end inlinehint attribute */
+
   /* We inline functions that are explicitly declared inline, or, when
      the user explicitly asks us to, all functions.  */
   if (DECL_DECLARED_INLINE_P (decl)
@@ -10433,6 +10453,14 @@ lookup_and_check_tag (enum tag_types tag_code, tree name,
 					   | DECL_SELF_REFERENCE_P (decl));
       return t;
     }
+  /* LLVM LOCAL begin mainline */
+  else if (decl && TREE_CODE (decl) == TREE_LIST)
+    {
+      error ("reference to %qD is ambiguous", name);
+      print_candidates (decl);
+      return error_mark_node;
+    }
+  /* LLVM LOCAL begin mainline */
   else
     return NULL_TREE;
 }
@@ -12086,7 +12114,18 @@ finish_function (int flags)
       && !cp_function_chain->can_throw
       && !flag_non_call_exceptions
       && !DECL_REPLACEABLE_P (fndecl))
-    TREE_NOTHROW (fndecl) = 1;
+    /* LLVM LOCAL begin - set nothrow for thunks to what it is for the
+       function that they're thunking.  */
+    {
+#ifdef ENABLE_LLVM
+      if (DECL_THUNK_P (fndecl))
+        TREE_NOTHROW (fndecl) = TREE_NOTHROW (THUNK_TARGET (fndecl));
+      else
+#endif
+        TREE_NOTHROW (fndecl) = 1;
+    }
+    /* LLVM LOCAL end - set nothrow for thunks to what it is for the
+       function that they're thunking.  */
 
   /* This must come after expand_function_end because cleanups might
      have declarations (from inline functions) that need to go into

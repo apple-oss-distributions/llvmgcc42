@@ -32,22 +32,20 @@ Software Foundation, 59 Temple Place - Suite 330, Boston, MA
 #include <cassert>
 #include <map>
 #include <string>
+#include "llvm/CallingConv.h"
 #include "llvm/Intrinsics.h"
 #include "llvm/ADT/IndexedMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/Support/DataTypes.h"
+#include "llvm/System/DataTypes.h"
 #include "llvm/Support/IRBuilder.h"
-#include "llvm/Support/Streams.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/TargetFolder.h"
+#include "llvm/Support/raw_os_ostream.h"
 
 extern "C" {
 #include "llvm.h"
 }
-
-/// Internal gcc structure describing an exception handling region.  Declared
-/// here to avoid including all of except.h.
-struct eh_region;
 
 namespace llvm {
   class Module;
@@ -70,13 +68,14 @@ namespace llvm {
 using namespace llvm;
 
 typedef IRBuilder<true, TargetFolder> LLVMBuilder;
+typedef SmallPtrSet<union tree_node *, 16> treeset;
 
 /// TheModule - This is the current global module that we are compiling into.
 ///
 extern llvm::Module *TheModule;
 
 /// TheDebugInfo - This object is responsible for gather all debug information.
-/// If it's value is NULL then no debug information should be gathered.
+/// If its value is NULL then no debug information should be gathered.
 extern llvm::DebugInfo *TheDebugInfo;
 
 /// TheTarget - The current target being compiled for.
@@ -88,10 +87,6 @@ extern TargetFolder *TheFolder;
 
 /// getTargetData - Return the current TargetData object from TheTarget.
 const TargetData &getTargetData();
-
-/// AsmOutFile - A C++ ostream wrapper around asm_out_file.
-///
-extern llvm::OStream *AsmOutFile;
 
 /// AttributeUsedGlobals - The list of globals that are marked attribute(used).
 extern SmallSetVector<Constant *,32> AttributeUsedGlobals;
@@ -107,6 +102,8 @@ void readLLVMTypesStringTable();
 void writeLLVMTypesStringTable();
 void readLLVMValues();
 void writeLLVMValues();
+void readLLVMTypeUsers();
+void writeLLVMTypeUsers();
 void eraseLocalLLVMValues();
 void clearTargetBuiltinCache();
 const char* extractRegisterName(union tree_node*);
@@ -132,17 +129,10 @@ class TypeConverter {
   ///
   std::vector<tree_node*> PointersToReresolve;
 
-  /// FieldIndexMap - Holds the mapping from a FIELD_DECL to the index of the
-  /// corresponding LLVM field.
-  std::map<tree_node *, unsigned int> FieldIndexMap;
 public:
   TypeConverter() : ConvertingStruct(false) {}
   
   const Type *ConvertType(tree_node *type);
-
-  /// GetFieldIndex - Returns the index of the LLVM field corresponding to
-  /// this FIELD_DECL.
-  unsigned int GetFieldIndex(tree_node *field_decl);
 
   /// GCCTypeOverlapsWithLLVMTypePadding - Return true if the specified GCC type
   /// has any data that overlaps with structure padding in the specified LLVM
@@ -156,7 +146,7 @@ public:
   const FunctionType *ConvertFunctionType(tree_node *type,
                                           tree_node *decl,
                                           tree_node *static_chain,
-                                          unsigned &CallingConv,
+                                          CallingConv::ID &CallingConv,
                                           AttrListPtr &PAL);
   
   /// ConvertArgListToFnType - Given a DECL_ARGUMENTS list on an GCC tree,
@@ -165,15 +155,15 @@ public:
   const FunctionType *ConvertArgListToFnType(tree_node *type,
                                              tree_node *arglist,
                                              tree_node *static_chain,
-                                             unsigned &CallingConv,
+                                             CallingConv::ID &CallingConv,
                                              AttrListPtr &PAL);
   
 private:
   const Type *ConvertRECORD(tree_node *type, tree_node *orig_type);
   const Type *ConvertUNION(tree_node *type, tree_node *orig_type);
-  void SetFieldIndex(tree_node *field_decl, unsigned int Index);
   bool DecodeStructFields(tree_node *Field, StructTypeConversionInfo &Info);
   void DecodeStructBitField(tree_node *Field, StructTypeConversionInfo &Info);
+  void SelectUnionMember(tree_node *type, StructTypeConversionInfo &Info);
 };
 
 extern TypeConverter *TheTypeConverter;
@@ -182,12 +172,6 @@ extern TypeConverter *TheTypeConverter;
 ///
 inline const Type *ConvertType(tree_node *type) {
   return TheTypeConverter->ConvertType(type);
-}
-
-/// GetFieldIndex - Given FIELD_DECL obtain its index.
-///
-inline unsigned int GetFieldIndex(tree_node *field_decl) {
-  return TheTypeConverter->GetFieldIndex(field_decl);
 }
 
 /// getINTEGER_CSTVal - Return the specified INTEGER_CST value as a uint64_t.
@@ -233,14 +217,20 @@ bool ValidateRegisterVariable(tree_node *decl);
 /// a pointer to the memory, its alignment and whether the access is volatile.
 struct MemRef {
   Value *Ptr;
-  unsigned Alignment;
   bool Volatile;
+private:
+  unsigned char LogAlign;
 
-  MemRef() : Ptr(0), Alignment(0), Volatile(false) {}
-  MemRef(Value *P, unsigned A, bool V)
-    : Ptr(P), Alignment(A), Volatile(V) {
-      // Allowing alignment 0 would complicate calculations, so forbid it.
-      assert(A && !(A & (A - 1)) && "Alignment not a power of 2!");
+public:
+  MemRef() : Ptr(0), Volatile(false), LogAlign(0) {}
+  MemRef(Value *P, uint32_t A, bool V) : Ptr(P), Volatile(V) {
+    // Forbid alignment 0 along with non-power-of-2 alignment values.
+    assert(isPowerOf2_32(A) && "Alignment not a power of 2!");
+    LogAlign = Log2_32(A);
+  }
+
+  uint32_t getAlignment() const {
+    return 1U << LogAlign;
   }
 };
 
@@ -253,21 +243,29 @@ struct MemRef {
 /// "LValue" is intended to be a light-weight object passed around by-value.
 struct LValue {
   Value *Ptr;
-  unsigned char Alignment;
   unsigned char BitStart;
   unsigned char BitSize;
-  
-  LValue(Value *P, unsigned Align)
-    : Ptr(P), Alignment(Align), BitStart(255), BitSize(255) {}
-  LValue(Value *P, unsigned Align, unsigned BSt, unsigned BSi) 
-  : Ptr(P), Alignment(Align), BitStart(BSt), BitSize(BSi) {
-      assert(BitStart == BSt && BitSize == BSi &&
-             "Bit values larger than 256?");
-    }
+private:
+  unsigned char LogAlign;
 
-  unsigned getAlignment() const {
-    assert(Alignment && "LValue alignment cannot be zero!");
-    return Alignment;
+public:
+  LValue() : Ptr(0), BitStart(255), BitSize(255), LogAlign(0) {}
+  LValue(Value *P, uint32_t A) : Ptr(P), BitStart(255), BitSize(255) {
+    // Forbid alignment 0 along with non-power-of-2 alignment values.
+    assert(isPowerOf2_32(A) && "Alignment not a power of 2!");
+    LogAlign = Log2_32(A);
+  }
+  LValue(Value *P, uint32_t A, unsigned BSt, unsigned BSi)
+  : Ptr(P), BitStart(BSt), BitSize(BSi) {
+    assert(BitStart == BSt && BitSize == BSi &&
+           "Bit values larger than 256?");
+    // Forbid alignment 0 along with non-power-of-2 alignment values.
+    assert(isPowerOf2_32(A) && "Alignment not a power of 2!");
+    LogAlign = Log2_32(A);
+  }
+
+  uint32_t getAlignment() const {
+    return 1U << LogAlign;
   }
   bool isBitfield() const { return BitStart != 255; }
 };
@@ -283,6 +281,9 @@ class TreeToLLVM {
   BasicBlock *ReturnBB;
   BasicBlock *UnwindBB;
   unsigned ReturnOffset;
+
+  // Lexical BLOCKS that we have previously seen and processed.
+  treeset SeenBlocks;
 
   // State that changes as the function is emitted.
 
@@ -322,22 +323,6 @@ class TreeToLLVM {
   /// FuncEHGetTypeID - Function used to return type id for give typeinfo.
   Function *FuncEHGetTypeID;
 
-  /// NumAddressTakenBlocks - Count the number of labels whose addresses are
-  /// taken.
-  uint64_t NumAddressTakenBlocks;
-
-  /// AddressTakenBBNumbers - For each label with its address taken, we keep 
-  /// track of its unique ID.
-  std::map<BasicBlock*, ConstantInt*> AddressTakenBBNumbers;
-  
-  /// IndirectGotoBlock - If non-null, the block that indirect goto's in this
-  /// function branch to.
-  BasicBlock *IndirectGotoBlock;
-  
-  /// IndirectGotoValue - This is set to be the alloca temporary that the
-  /// indirect goto block switches on.
-  Value *IndirectGotoValue;
-  
 public:
   TreeToLLVM(tree_node *fndecl);
   ~TreeToLLVM();
@@ -353,10 +338,6 @@ public:
   /// the address of the result.
   LValue EmitLV(tree_node *exp);
 
-  /// getIndirectGotoBlockNumber - Return the unique ID of the specified basic
-  /// block for uses that take the address of it.
-  Constant *getIndirectGotoBlockNumber(BasicBlock *BB);
-  
   /// getIndirectGotoBlock - Get (and potentially lazily create) the indirect
   /// goto block.
   BasicBlock *getIndirectGotoBlock();
@@ -396,7 +377,7 @@ public:
   /// CreateTemporary - Create a new alloca instruction of the specified type,
   /// inserting it into the entry block and returning it.  The resulting
   /// instruction's type is a pointer to the specified type.
-  AllocaInst *CreateTemporary(const Type *Ty);
+  AllocaInst *CreateTemporary(const Type *Ty, unsigned align=0);
 
   /// CreateTempLoc - Like CreateTemporary, but returns a MemRef.
   MemRef CreateTempLoc(const Type *Ty);
@@ -405,12 +386,30 @@ public:
   /// GCC type specified by GCCType to know which elements to copy.
   void EmitAggregateCopy(MemRef DestLoc, MemRef SrcLoc, tree_node *GCCType);
 
-private: // Helper functions.
+  // 'desired' and 'grand' are GCC BLOCK nodes, representing lexical
+  // blocks.  Assumes we're in the 'grand' context; push contexts
+  // until we reach the 'desired' context.
+  void push_regions(tree_node *desired, tree_node *grand);
 
-  /// StartFunctionBody - Start the emission of 'fndecl', outputing all
+  // Given a GCC lexical context (BLOCK or FUNCTION_DECL), make it the
+  // new current BLOCK/context/scope.  Emit any local variables found
+  // in the new context.  Note that the variable emission order must be
+  // consistent with and without debug info; otherwise, the register
+  // allocation would change with -g, and users dislike that.
+  void switchLexicalBlock(tree_node *exp);
+
+  /// StartFunctionBody - Start the emission of 'FnDecl', outputing all
   /// declarations for parameters and setting things up.
   void StartFunctionBody();
   
+private: // Helper functions.
+
+  // Walk over the lexical BLOCK() tree of the given FUNCTION_DECL;
+  // set the BLOCK_NUMBER() fields to the depth of each block, and
+  // add every var or type encountered in the BLOCK_VARS() lists to
+  // the given set.
+  void setLexicalBlockDepths(tree_node *t, treeset &s, unsigned level);
+
   /// FinishFunctionBody - Once the body of the function has been emitted, this
   /// cleans up and returns the result function.
   Function *FinishFunctionBody();
@@ -430,10 +429,11 @@ private: // Helper functions.
   void EmitAggregateZero(MemRef DestLoc, tree_node *GCCType);
                          
   /// EmitMemCpy/EmitMemMove/EmitMemSet - Emit an llvm.memcpy/llvm.memmove or
-  /// llvm.memset call with the specified operands.
-  void EmitMemCpy(Value *DestPtr, Value *SrcPtr, Value *Size, unsigned Align);
-  void EmitMemMove(Value *DestPtr, Value *SrcPtr, Value *Size, unsigned Align);
-  void EmitMemSet(Value *DestPtr, Value *SrcVal, Value *Size, unsigned Align);
+  /// llvm.memset call with the specified operands.  Returns DestPtr bitcast
+  /// to i8*.
+  Value *EmitMemCpy(Value *DestPtr, Value *SrcPtr, Value *Size, unsigned Align);
+  Value *EmitMemMove(Value *DestPtr, Value *SrcPtr, Value *Size, unsigned Align);
+  Value *EmitMemSet(Value *DestPtr, Value *SrcVal, Value *Size, unsigned Align);
 
   /// EmitLandingPads - Emit EH landing pads.
   void EmitLandingPads();
@@ -443,6 +443,10 @@ private: // Helper functions.
 
   /// EmitUnwindBlock - Emit the lazily created EH unwind block.
   void EmitUnwindBlock();
+
+  /// EmitDebugInfo - Return true if debug info is to be emitted for current 
+  /// function.
+  bool EmitDebugInfo();
 
 private: // Helpers for exception handling.
 
@@ -511,6 +515,7 @@ private:
   Value *EmitCEIL_DIV_EXPR(tree_node *exp);
   Value *EmitFLOOR_DIV_EXPR(tree_node *exp);
   Value *EmitROUND_DIV_EXPR(tree_node *exp);
+  Value *EmitFieldAnnotation(Value *FieldPtr, tree_node *FieldDecl);
 
   // Exception Handling.
   Value *EmitEXC_PTR_EXPR(tree_node *exp);
@@ -521,8 +526,10 @@ private:
   Value *EmitASM_EXPR(tree_node *exp);
   Value *EmitReadOfRegisterVariable(tree_node *vardecl, const MemRef *DestLoc);
   void EmitModifyOfRegisterVariable(tree_node *vardecl, Value *RHS);
+  Value *EmitMoveOfRegVariableToRightReg(Instruction *I, tree_node *decl);
 
   // Helpers for Builtin Function Expansion.
+  void EmitMemoryBarrier(bool ll, bool ls, bool sl, bool ss, bool device);
   Value *BuildVector(const std::vector<Value*> &Elts);
   Value *BuildVector(Value *Elt, ...);
   Value *BuildVectorShuffle(Value *InVec1, Value *InVec2, ...);
@@ -573,15 +580,16 @@ private:
   Value *EmitComplexBinOp(tree_node *exp, const MemRef *DestLoc);
 
   // L-Value Expressions.
-  LValue EmitLV_DECL(tree_node *exp);
   LValue EmitLV_ARRAY_REF(tree_node *exp);
-  LValue EmitLV_COMPONENT_REF(tree_node *exp);
-  Value *EmitFieldAnnotation(Value *FieldPtr, tree_node *FieldDecl);
   LValue EmitLV_BIT_FIELD_REF(tree_node *exp);
-  LValue EmitLV_XXXXPART_EXPR(tree_node *exp, unsigned Idx);
-  LValue EmitLV_VIEW_CONVERT_EXPR(tree_node *exp);
+  LValue EmitLV_COMPONENT_REF(tree_node *exp);
+  LValue EmitLV_DECL(tree_node *exp);
   LValue EmitLV_EXC_PTR_EXPR(tree_node *exp);
   LValue EmitLV_FILTER_EXPR(tree_node *exp);
+  LValue EmitLV_INDIRECT_REF(tree_node *exp);
+  LValue EmitLV_VIEW_CONVERT_EXPR(tree_node *exp);
+  LValue EmitLV_WITH_SIZE_EXPR(tree_node *exp);
+  LValue EmitLV_XXXXPART_EXPR(tree_node *exp, unsigned Idx);
 
   // Constant Expressions.
   Value *EmitINTEGER_CST(tree_node *exp);
@@ -595,7 +603,14 @@ private:
                             Value *&Result,
                             const Type *ResultType,
                             std::vector<Value*> &Ops);
+
+public:
+  // Helper for taking the address of a label.
+  Constant *EmitLV_LABEL_DECL(tree_node *exp);
 };
+
+/// TheTreeToLLVM - Keep track of the current function being compiled.
+extern TreeToLLVM *TheTreeToLLVM;
 
 /// TreeConstantToLLVM - An instance of this class is created and used to 
 /// convert tree constant values to LLVM.  This is primarily for things like
@@ -629,5 +644,5 @@ public:
   
 };
 
-#endif
+#endif /* LLVM_INTERNAL_H */
 /* LLVM LOCAL end (ENTIRE FILE!)  */

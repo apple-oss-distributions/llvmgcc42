@@ -3452,6 +3452,11 @@ enum rs6000_builtins
 #ifdef ENABLE_LLVM
 #define LLVM_TARGET_INTRINSIC_PREFIX "ppc"
 
+/* LLVM_TARGET_NAME - This specifies the name of the target, which correlates to
+ * the llvm::InitializeXXXTarget() function.
+ */
+#define LLVM_TARGET_NAME PowerPC
+
 /* Turn -march=xx into a CPU type.
  */
 #define LLVM_SET_SUBTARGET_FEATURES(F) \
@@ -3483,6 +3488,15 @@ enum rs6000_builtins
         TargetIntrinsicLower(EXP, BUILTIN_CODE, DESTLOC, RESULT, DESTTY, OPS);
 
 #ifdef LLVM_ABI_H
+
+extern bool llvm_rs6000_try_pass_aggregate_custom(tree,
+						  std::vector<const Type*>&,
+						  const CallingConv::ID &,
+						  struct DefaultABIClient*);
+
+#define LLVM_TRY_PASS_AGGREGATE_CUSTOM(T, E, CC, C)	\
+  llvm_rs6000_try_pass_aggregate_custom((T), (E), (CC), (C))
+
 extern bool llvm_rs6000_should_pass_aggregate_byval(tree, const Type *);
 
 #define LLVM_SHOULD_PASS_AGGREGATE_USING_BYVAL_ATTR(X, TY)      \
@@ -3498,7 +3512,7 @@ extern bool llvm_rs6000_should_pass_aggregate_in_mixed_regs(tree, const Type*,
                                               std::vector<const Type*>&);
 
 /* FIXME this is needed for 64-bit  */
-#define LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(T, TY, E) \
+#define LLVM_SHOULD_PASS_AGGREGATE_IN_MIXED_REGS(T, TY, CC, E) \
    llvm_rs6000_should_pass_aggregate_in_mixed_regs((T), (TY), (E))
 
 extern tree llvm_rs6000_should_return_vector_as_scalar(tree, bool);
@@ -3513,6 +3527,11 @@ extern bool llvm_rs6000_should_return_vector_as_shadow(tree, bool);
 /* Non-altivec vectors bigger than 8 bytes are returned by sret. */
 #define LLVM_SHOULD_RETURN_VECTOR_AS_SHADOW(X,isBuiltin)\
   llvm_rs6000_should_return_vector_as_shadow((X), (isBuiltin))
+
+#if defined(POWERPC_LINUX) && (TARGET_64BIT == 0)
+#define LLVM_SHOULD_PASS_AGGREGATE_IN_INTEGER_REGS(X, Y, Z) \
+  false
+#endif
 
 #endif /* LLVM_ABI_H */
 #endif /* ENABLE_LLVM */
