@@ -4307,13 +4307,11 @@ build_range_check (tree type, tree exp, int in_p, tree low, tree high)
 
       if (TREE_INT_CST_HIGH (high) == hi && TREE_INT_CST_LOW (high) == lo)
 	{
-	  if (TYPE_UNSIGNED (etype))
-	    {
-	      etype = lang_hooks.types.signed_type (etype);
-	      exp = fold_convert (etype, exp);
-	    }
-	  return fold_build2 (GT_EXPR, type, exp,
-			      build_int_cst (etype, 0));
+          /* LLVM LOCAL begin 9186245 */
+          if (!TYPE_UNSIGNED(etype))
+            return fold_build2 (GT_EXPR, type, exp,
+                                build_int_cst (etype, 0));
+          /* LLVM LOCAL end 9186245 */
 	}
     }
 
@@ -12841,10 +12839,20 @@ tree_expr_nonzero_warnv_p (tree t, bool *strict_overflow_p)
 
    case ADDR_EXPR:
       {
-	tree base = get_base_address (TREE_OPERAND (t, 0));
+        tree targ0 = TREE_OPERAND (t, 0);
+        tree base = get_base_address (targ0);
 
 	if (!base)
 	  return false;
+
+        /* LLVM LOCAL begin */
+#ifdef ENABLE_LLVM
+        /* Support the "array ref with pointer base" extension. */
+        if (TREE_CODE (targ0) == ARRAY_REF &&
+            TREE_CODE (TREE_TYPE (TREE_OPERAND(targ0, 0))) != ARRAY_TYPE)
+          return false;
+#endif
+        /* LLVM LOCAL end */
 
 	/* Weak declarations may link to NULL.  */
 	if (VAR_OR_FUNCTION_DECL_P (base))
